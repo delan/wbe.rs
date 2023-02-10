@@ -1,3 +1,5 @@
+pub mod http;
+
 use std::{
     io::{Read, Write},
     net::TcpStream,
