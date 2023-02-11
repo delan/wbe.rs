@@ -208,11 +208,11 @@ impl Browser {
         let x_min = viewport_rect.min.x + HSTEP;
         let x_max = viewport_rect.max.x - HSTEP * 2.0;
         let mut cursor = pos2(x_min, viewport_rect.min.y + HSTEP);
-        let mut input = response_body.as_bytes();
+        let mut input = &*response_body;
         let mut display_list = vec![];
         while let Some(token) = lparse_chomp(&mut input, "<.+?>|[^<]+") {
-            if !token.starts_with(b"<") {
-                for c in str::from_utf8(token).unwrap().chars() {
+            if !token.starts_with("<") {
+                for c in token.chars() {
                     display_list.push(PaintText(cursor, font.clone(), c.to_string()));
                     cursor += vec2(HSTEP, 0.0);
                     if cursor.x > x_max {

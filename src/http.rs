@@ -13,30 +13,28 @@ use tracing::{debug, instrument};
 use crate::*;
 
 #[instrument]
-pub fn request(url: &str) -> eyre::Result<(BTreeMap<Vec<u8>, Vec<u8>>, Vec<u8>)> {
-    let mut url = url.as_bytes();
+pub fn request(url: &str) -> eyre::Result<(BTreeMap<String, String>, Vec<u8>)> {
+    let mut url = url;
     let scheme = lparse_chomp(&mut url, "https?:").expect("failed to chomp url scheme");
     lparse_chomp(&mut url, "//").expect("failed to chomp url //");
     let (host, path) = lparse_split(url, "[^/]+").expect("failed to split url host/path");
     let (hostname, port) = rparse_split(host, r":\d+").unwrap_or((
         host,
         match scheme {
-            b"http:" => b":80",
-            b"https:" => b":443",
+            "http:" => ":80",
+            "https:" => ":443",
             _ => unreachable!(),
         },
     ));
-    let host = str::from_utf8(host)?;
-    let hostname = str::from_utf8(hostname)?;
-    let port = u16::from_str(str::from_utf8(&port[1..])?)?;
+    let port = u16::from_str(&port[1..])?;
     let path = match path {
-        b"" => "/",
-        x => str::from_utf8(x)?,
+        "" => "/",
+        other => other,
     };
 
     let mut stream: Box<dyn ReadWriteStream> = match scheme {
-        b"http:" => Box::new(TcpStream::connect((hostname, port))?),
-        b"https:" => {
+        "http:" => Box::new(TcpStream::connect((hostname, port))?),
+        "https:" => {
             let connector = RustlsConnector::new_with_native_certs()?;
             let stream = TcpStream::connect((hostname, port))?;
             Box::new(connector.connect(hostname, stream)?)
@@ -65,13 +63,16 @@ pub fn request(url: &str) -> eyre::Result<(BTreeMap<Vec<u8>, Vec<u8>>, Vec<u8>)>
 
     let mut headers = BTreeMap::default();
     while stream.read_until(b'\n', &mut received)? > 0 {
-        let line = received.strip_suffix(b"\r\n").unwrap();
+        // TODO: hard-coding utf-8 is not correct in practice
+        let line = str::from_utf8(&received)?;
+        let line = line.strip_suffix("\r\n").unwrap();
         if line.is_empty() {
             break;
         }
-        let [field, value] = line.splitn(2, |x| *x == b':').collect::<Vec<_>>()[..]
-            else { panic!("failed to parse response header") };
-        debug!(field = dump(field), value = dump(value));
+        let (field, value) = line
+            .split_once(":")
+            .expect("failed to parse response header");
+        debug!(field = field, value = value);
         headers.insert(
             trim_ascii(field).to_ascii_lowercase(),
             trim_ascii(value).to_owned(),
@@ -79,8 +80,8 @@ pub fn request(url: &str) -> eyre::Result<(BTreeMap<Vec<u8>, Vec<u8>>, Vec<u8>)>
         received.clear();
     }
 
-    assert!(!headers.contains_key(&b"transfer-encoding"[..]));
-    assert!(!headers.contains_key(&b"content-encoding"[..]));
+    assert!(!headers.contains_key("transfer-encoding"));
+    assert!(!headers.contains_key("content-encoding"));
 
     let mut body = vec![];
     stream.read_to_end(&mut body)?;
