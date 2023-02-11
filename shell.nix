@@ -2,7 +2,10 @@
 pkgs.mkShell {
   shellHook = ''
     # INFO winit::platform_impl::platform::x11::window: Guessed window scale factor: 1.1666666666666667
-    export WINIT_X11_SCALE_FACTOR=1
+    # export WINIT_X11_SCALE_FACTOR=1
+
+    # Times New Roman
+    export WBE_FONT_PATH=${pkgs.corefonts.outPath}/share/fonts/truetype/times.ttf
 
     export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [
       pkgs.xorg.libX11
