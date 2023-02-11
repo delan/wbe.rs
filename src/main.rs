@@ -1,12 +1,16 @@
-use std::{env::args, fmt::Debug, mem::swap, str};
+use std::{env::args, mem::swap, str};
 
-use ab_glyph::{Font, FontRef, PxScaleFont, ScaleFont};
+use ab_glyph::ScaleFont;
 use egui::{
-    pos2, vec2, Align, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, Frame,
-    Layout, Pos2, Rect, Stroke, TextEdit, Ui, Vec2,
+    pos2, vec2, Align, Align2, Color32, FontData, FontDefinitions, FontFamily, Frame, Layout, Rect,
+    Stroke, TextEdit, Ui, Vec2,
 };
-use tracing::{debug, error, instrument, trace};
+use tracing::{error, instrument, trace};
 
+use wbe::document::Document;
+use wbe::font::FontInfo;
+use wbe::paint::PaintText;
+use wbe::viewport::ViewportInfo;
 use wbe::*;
 
 // to squelch rust-analyzer error on FONT_PATH in vscode, set
@@ -75,166 +79,6 @@ impl Default for Browser {
             viewport: Default::default(),
             scroll: Vec2::ZERO,
         }
-    }
-}
-
-#[derive(Debug)]
-enum Document {
-    None,
-    Navigated {
-        location: String,
-    },
-    Loaded {
-        location: String,
-        response_body: String,
-    },
-    LaidOut {
-        location: String,
-        response_body: String,
-        display_list: Vec<PaintText>,
-        viewport: ViewportInfo,
-    },
-}
-
-impl Default for Document {
-    fn default() -> Self {
-        Self::LaidOut {
-            location: "about:blank".to_owned(),
-            response_body: "".to_owned(),
-            display_list: vec![],
-            viewport: Default::default(),
-        }
-    }
-}
-
-impl Document {
-    fn take(&mut self) -> Self {
-        let mut result = Self::None;
-        swap(self, &mut result);
-
-        result
-    }
-
-    fn invalidate_layout(self) -> Self {
-        match self {
-            Document::LaidOut {
-                location,
-                response_body,
-                ..
-            } => Document::Loaded {
-                location,
-                response_body,
-            },
-            other => other,
-        }
-    }
-
-    fn status(&self) -> &'static str {
-        match self {
-            Document::None => "None",
-            Document::Navigated { .. } => "Navigated",
-            Document::Loaded { .. } => "Loaded",
-            Document::LaidOut { .. } => "LaidOut",
-        }
-    }
-
-    fn size(&self) -> Vec2 {
-        let mut result = Vec2::ZERO;
-        if let Self::LaidOut { display_list, .. } = self {
-            for paint in display_list {
-                result = result.max(paint.rect().max.to_vec2());
-            }
-        }
-
-        result
-    }
-
-    fn scroll_limit(&self) -> Vec2 {
-        let mut result = self.size();
-        if let Self::LaidOut { viewport, .. } = self {
-            result -= viewport.rect.size();
-        }
-
-        result.max(Vec2::ZERO)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct PaintText(Rect, FontInfo, String);
-
-impl PaintText {
-    fn rect(&self) -> &Rect {
-        &self.0
-    }
-
-    fn font(&self) -> &FontId {
-        &self.1.egui
-    }
-
-    fn text(&self) -> &str {
-        &self.2
-    }
-}
-
-#[derive(Debug, Clone)]
-struct FontInfo {
-    egui: FontId,
-    ab: PxScaleFont<FontRef<'static>>,
-}
-
-impl FontInfo {
-    #[instrument(skip(data))]
-    fn new(
-        family: FontFamily,
-        data: &'static [u8],
-        size_egui_points: f32,
-        pixels_per_egui_point: f32,
-    ) -> eyre::Result<Self> {
-        let font_id = FontId::new(size_egui_points, family);
-
-        let font = FontRef::try_from_slice(data)?;
-        let ab_height_unscaled = font.height_unscaled();
-        let ab_units_per_em = font.units_per_em().expect("Font::units_per_em() was None");
-        let size_pixels =
-            size_egui_points * pixels_per_egui_point * ab_height_unscaled / ab_units_per_em;
-        trace!(ab_height_unscaled, ab_units_per_em);
-
-        Ok(Self {
-            egui: font_id,
-            ab: font.into_scaled(size_pixels),
-        })
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-struct ViewportInfo {
-    rect: Rect,
-    scale: f32,
-}
-
-impl Default for ViewportInfo {
-    fn default() -> Self {
-        Self {
-            rect: Rect::NAN,
-            scale: f32::NAN,
-        }
-    }
-}
-
-impl ViewportInfo {
-    #[instrument(skip(self, cursor, screen_rect, pixels_per_point))]
-    fn update(&mut self, cursor: Rect, screen_rect: Rect, pixels_per_point: f32) -> &mut Self {
-        // e.g. cursor [[0 24] - [800 inf]], screen_rect [[0 0] - [800 600]]
-        let mut viewport_rect = cursor;
-        *viewport_rect.bottom_mut() = screen_rect.bottom();
-
-        if viewport_rect != self.rect || pixels_per_point != self.scale {
-            debug!(?cursor, ?screen_rect, pixels_per_point);
-            self.rect = viewport_rect;
-            self.scale = pixels_per_point;
-        }
-
-        self
     }
 }
 

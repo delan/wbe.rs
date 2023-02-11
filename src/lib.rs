@@ -1,4 +1,8 @@
+pub mod document;
+pub mod font;
 pub mod http;
+pub mod paint;
+pub mod viewport;
 
 use std::{
     io::{Read, Write},
