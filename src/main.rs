@@ -1,3 +1,5 @@
+use std::ops::Deref;
+use std::sync::{Arc, RwLock};
 use std::{env::args, mem::swap, str};
 
 use ab_glyph::ScaleFont;
@@ -5,9 +7,10 @@ use egui::{
     pos2, vec2, Align, Align2, Color32, FontData, FontDefinitions, FontFamily, Frame, Layout, Rect,
     Stroke, TextEdit, Ui, Vec2,
 };
-use tracing::{error, instrument, trace};
+use tracing::{debug, error, info, instrument, trace};
 
 use wbe::document::Document;
+use wbe::dom::{Node, NodeData};
 use wbe::font::FontInfo;
 use wbe::paint::PaintText;
 use wbe::viewport::ViewportInfo;
@@ -19,6 +22,26 @@ const MARGIN: f32 = 16.0;
 const FONT_SIZE: f32 = 16.0;
 const FONT_NAME: &str = "Times New Roman";
 const FONT_DATA: &[u8] = include_bytes!(env!("WBE_FONT_PATH"));
+
+// ([if the child is one of these], [the stack must not end with this sequence])
+const NO_NEST: &[(&[&str], &[&str])] = &[
+    (
+        &["p", "table", "form", "h1", "h2", "h3", "h4", "h5", "h6"],
+        &["p"],
+    ),
+    (&["li"], &["li"]),
+    (&["dt", "dd"], &["dt"]),
+    (&["dt", "dd"], &["dd"]),
+    (&["tr"], &["tr"]),
+    (&["tr"], &["tr", "td"]),
+    (&["tr"], &["tr", "th"]),
+    (&["td", "th"], &["td"]),
+    (&["td", "th"], &["th"]),
+];
+const SELF_CLOSING: &[&str] = &[
+    "!doctype", "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
+    "param", "source", "track", "wbr",
+];
 
 fn main() -> eyre::Result<()> {
     // log to stdout (level configurable by RUST_LOG=debug)
@@ -101,7 +124,105 @@ impl Browser {
     }
 
     #[instrument(skip(self, response_body))]
-    fn layout(&mut self, location: String, response_body: String) -> eyre::Result<Document> {
+    fn parse(&mut self, location: String, response_body: String) -> eyre::Result<Document> {
+        let mut parent = Node::new(NodeData::Document);
+        let mut stack = vec![parent.clone()];
+        let mut input = &*response_body;
+
+        // TODO this should really use nom
+        let ident = r"[0-9A-Za-z!?:-]+";
+        let space = r"[\t\n\v\r ]";
+        let attr = format!(r#"(?:[^"'>{}]*|"[^"]*"|'[^']*')"#, space,);
+        let tag = format!(
+            r"<(/?)({})({}+{}(?:{}*={}*{})?)*{}*/?>",
+            ident, space, ident, space, space, attr, space
+        );
+        let script = format!(
+            r"<(?i-u:script)({}+{}(?:{}*={}*{})?)*{}*>(.*?)</(?i-u:script){}*>",
+            space, ident, space, space, attr, space, space
+        );
+        let style = format!(
+            r"<(?i-u:style)({}+{}(?:{}*={}*{})?)*{}*>(.*?)</(?i-u:style){}*>",
+            space, ident, space, space, attr, space, space
+        );
+        let comment = r"<!--(.*?)-->";
+        let pattern = format!(r"{}|{}|{}|{}|<|[^<]+", comment, script, style, tag);
+
+        while let Some(token) = lparse_chomp(&mut input, &pattern) {
+            let token = token.get(0).unwrap().as_str();
+            if let Some(comment) = lparse(token, comment) {
+                parent.append(&[Node::comment(comment.get(1).unwrap().as_str().to_owned())]);
+            } else if let Some(script) = lparse(token, &script) {
+                // TODO attrs
+                parent.append(&[Node::element("script".to_owned(), vec![])
+                    .append(&[Node::text(script.get(2).unwrap().as_str().to_owned())])]);
+            } else if let Some(style) = lparse(token, &style) {
+                // TODO attrs
+                parent.append(&[Node::element("style".to_owned(), vec![])
+                    .append(&[Node::text(style.get(2).unwrap().as_str().to_owned())])]);
+            } else if let Some(tag) = lparse(token, &tag) {
+                let name = tag.get(2).unwrap().as_str().to_ascii_lowercase();
+                if tag.get(1).unwrap().as_str() == "/" {
+                    loop {
+                        let old = stack.pop().expect("FIXME");
+                        parent = parent.parent().expect("FIXME");
+                        if old.name() == name {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                let element = Node::element(name.to_owned(), vec![]);
+
+                for &(child_names, suffix) in NO_NEST {
+                    if child_names.contains(&&*name) {
+                        let parent_names = parent
+                            .ancestors_inclusive()
+                            .iter()
+                            .rev()
+                            .map(|x| x.name())
+                            .collect::<Vec<_>>();
+                        trace!(name, ?child_names, ?suffix, ?parent_names);
+                        let parent_names =
+                            parent_names.iter().map(|x| x.deref()).collect::<Vec<_>>();
+                        if parent_names.ends_with(suffix) {
+                            trace!(true, name, ?child_names, ?suffix, ?parent_names);
+                            for _ in 0..suffix.len() {
+                                stack.pop();
+                                parent = parent.parent().unwrap();
+                            }
+                        }
+                    }
+                }
+
+                parent.append(&[element.clone()]);
+
+                if !SELF_CLOSING.contains(&&*name) {
+                    stack.push(element.clone());
+                    parent = element;
+                }
+            } else {
+                parent.append(&[Node::text(token.to_owned())]);
+            };
+        }
+
+        let dom = stack[0].clone();
+        debug!(%dom);
+
+        Ok(Document::Parsed {
+            location,
+            response_body,
+            dom,
+        })
+    }
+
+    #[instrument(skip(self, response_body, dom))]
+    fn layout(
+        &mut self,
+        location: String,
+        response_body: String,
+        dom: Node,
+    ) -> eyre::Result<Document> {
         let viewport = self.viewport.clone();
         let mut font = FontInfo::new(
             FontFamily::Proportional,
@@ -118,7 +239,6 @@ impl Browser {
         let x_min = viewport.rect.min.x + MARGIN;
         let x_max = viewport.rect.max.x - MARGIN;
         let mut cursor = pos2(x_min, viewport.rect.min.y + MARGIN);
-        let mut input = &*response_body;
         let mut display_list = Vec::<PaintText>::default();
 
         // per-line data
@@ -126,32 +246,74 @@ impl Browser {
         let mut max_ascent = 0.0f32;
         let mut max_height = 0.0f32;
 
-        while let Some(mut token) = lparse_chomp(&mut input, r"<.+?>|[\t\n\v\r ]+|[^<]+") {
-            if !token.starts_with("<") {
-                if lparse(token, r"[\t\n\v\r ]+").is_some() {
-                    token = " ";
-                }
-                for c in token.chars() {
-                    let glyph_id = font.ab.glyph_id(c);
-                    let advance = font.ab.h_advance(glyph_id) / viewport.scale;
-                    let ascent = font.ab.ascent() / viewport.scale;
-                    let height = font.ab.height() / viewport.scale;
-                    if cursor.x + advance > x_max {
-                        for paint in &mut display_list[i..] {
-                            *paint.0.top_mut() += max_ascent - paint.1.ab.ascent() / viewport.scale;
+        let mut parent = dom.clone();
+        let mut children = parent.children();
+        let mut stack = vec![];
+        let mut j = 0;
+        while j < children.len() {
+            trace!(parent = %parent.data(), child = %children[j].data());
+            let descended = match &*children[j].name() {
+                "#text" => {
+                    let value = children[j].value().unwrap();
+                    let mut value = &*value;
+                    while let Some(token) = lparse_chomp(&mut value, r"[\t\n\v\r ]+|.") {
+                        let mut token = token.get(0).unwrap().as_str();
+                        if lparse(token, r"[\t\n\v\r ]+").is_some() {
+                            token = " ";
                         }
-                        cursor.x = x_min;
-                        cursor.y += max_height;
-                        i = display_list.len();
-                        max_ascent = 0.0;
-                        max_height = 0.0;
+                        for c in token.chars() {
+                            let glyph_id = font.ab.glyph_id(c);
+                            let advance = font.ab.h_advance(glyph_id) / viewport.scale;
+                            let ascent = font.ab.ascent() / viewport.scale;
+                            let height = font.ab.height() / viewport.scale;
+                            if cursor.x + advance > x_max {
+                                for paint in &mut display_list[i..] {
+                                    *paint.0.top_mut() +=
+                                        max_ascent - paint.1.ab.ascent() / viewport.scale;
+                                }
+                                cursor.x = x_min;
+                                cursor.y += max_height;
+                                i = display_list.len();
+                                max_ascent = 0.0;
+                                max_height = 0.0;
+                            }
+                            max_ascent = max_ascent.max(ascent);
+                            max_height = max_height.max(height);
+                            let rect = Rect::from_min_size(cursor, vec2(advance, height));
+                            display_list.push(PaintText(rect, font.clone(), c.to_string()));
+                            cursor.x += advance;
+                            swap(&mut font, &mut font2);
+                            swap(&mut font, &mut font2);
+                        }
                     }
-                    max_ascent = max_ascent.max(ascent);
-                    max_height = max_height.max(height);
-                    let rect = Rect::from_min_size(cursor, vec2(advance, height));
-                    display_list.push(PaintText(rect, font.clone(), c.to_string()));
-                    cursor.x += advance;
-                    swap(&mut font, &mut font2);
+
+                    false
+                }
+                "#document" => unreachable!(),
+                "#comment" => false,
+                _other => {
+                    let mut pushed = false;
+                    if j + 1 < children.len() {
+                        stack.push((parent.clone(), j + 1));
+                        pushed = true;
+                    }
+                    parent = children[j].clone();
+                    children = parent.children();
+                    j = 0;
+                    trace!(new_parent_down = %parent.data(), pushed);
+
+                    true
+                }
+            };
+            if !descended {
+                j += 1;
+            }
+            if j >= children.len() {
+                if let Some(previous) = stack.pop() {
+                    parent = previous.0;
+                    children = parent.children();
+                    j = previous.1;
+                    trace!(new_parent_up = %parent.data());
                 }
             }
         }
@@ -163,6 +325,7 @@ impl Browser {
         Ok(Document::LaidOut {
             location,
             response_body,
+            dom,
             display_list,
             viewport,
         })
@@ -174,7 +337,7 @@ impl Browser {
         for paint in display_list {
             let rect = paint.rect().translate(-self.scroll);
             if rect.intersects(viewport.rect) {
-                painter.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::from_rgb(255, 0, 255)));
+                // painter.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::from_rgb(255, 0, 255)));
                 painter.text(
                     rect.min,
                     Align2::LEFT_TOP,
@@ -203,7 +366,12 @@ impl Browser {
             Document::Loaded {
                 location,
                 response_body,
-            } => self.layout(location, response_body)?,
+            } => self.parse(location, response_body)?,
+            Document::Parsed {
+                location,
+                response_body,
+                dom,
+            } => self.layout(location, response_body, dom)?,
             document @ Document::LaidOut { .. } => document,
         };
         if let Document::LaidOut { .. } = &self.next_document {
@@ -262,12 +430,13 @@ impl eframe::App for Browser {
                             )
                         {
                             let document = self.document.take().invalidate_layout();
-                            if let Document::Loaded {
+                            if let Document::Parsed {
                                 location,
                                 response_body,
+                                dom,
                             } = document
                             {
-                                self.document = self.layout(location, response_body).unwrap();
+                                self.document = self.layout(location, response_body, dom).unwrap();
                             } else {
                                 self.document = document;
                             }

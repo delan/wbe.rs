@@ -1,4 +1,5 @@
 pub mod document;
+pub mod dom;
 pub mod font;
 pub mod http;
 pub mod paint;
@@ -9,7 +10,7 @@ use std::{
     net::TcpStream,
 };
 
-use regex::Regex;
+use regex::{bytes::Captures as BinCaptures, bytes::Regex as BinRegex, Captures, Regex};
 use rustls_connector::TlsStream;
 
 #[macro_export]
@@ -30,6 +31,33 @@ macro_rules! dbg_bytes {
     };
 }
 
+#[macro_export]
+macro_rules! w {
+    ($node:expr) => {
+        $node.write().unwrap()
+    };
+}
+
+#[macro_export]
+macro_rules! r {
+    ($node:expr) => {
+        $node.read().unwrap()
+    };
+}
+
+pub struct Split<'i>(Captures<'i>, &'i str);
+pub struct BinSplit<'i>(BinCaptures<'i>, &'i [u8]);
+impl<'i> Split<'i> {
+    pub fn into_pair(self) -> (&'i str, &'i str) {
+        (self.0.get(0).unwrap().as_str(), self.1)
+    }
+}
+impl<'i> BinSplit<'i> {
+    pub fn into_pair(self) -> (&'i [u8], &'i [u8]) {
+        (self.0.get(0).unwrap().as_bytes(), self.1)
+    }
+}
+
 pub fn dump(bytes: &[u8]) -> String {
     bytes
         .iter()
@@ -37,105 +65,101 @@ pub fn dump(bytes: &[u8]) -> String {
         .collect::<String>()
 }
 
-pub fn parse<'i>(input: &'i str, pattern: &str) -> Option<&'i str> {
+pub fn parse<'i>(input: &'i str, pattern: &str) -> Option<Captures<'i>> {
     // +s (dot matches newlines), but no -u by default. -u affects ascii
     // character classes (\w\d\s), but it also makes dot (.) unusable.
     let pattern = format!("(?s){}", pattern);
     let re = Regex::new(&pattern).expect("failed to create Regex");
-    let Some(result) = re.find(input) else { return None };
 
-    Some(result.as_str())
+    re.captures(input)
 }
 
-pub fn parse_bytes<'i>(input: &'i [u8], pattern: &str) -> Option<&'i [u8]> {
+pub fn parse_bytes<'i>(input: &'i [u8], pattern: &str) -> Option<BinCaptures<'i>> {
     // +s (dot matches newlines), -u (ascii \w\d\s and dot matches one octet).
     let pattern = format!("(?s-u){}", pattern);
-    let re = regex::bytes::Regex::new(&pattern).expect("failed to create Regex");
-    let Some(result) = re.find(input) else { return None };
+    let re = BinRegex::new(&pattern).expect("failed to create Regex");
 
-    Some(result.as_bytes())
+    re.captures(input)
 }
 
-pub fn lparse<'i>(input: &'i str, pattern: &str) -> Option<&'i str> {
+pub fn lparse<'i>(input: &'i str, pattern: &str) -> Option<Captures<'i>> {
     parse(input, &format!("^{}", pattern))
 }
 
-pub fn lparse_bytes<'i>(input: &'i [u8], pattern: &str) -> Option<&'i [u8]> {
+pub fn lparse_bytes<'i>(input: &'i [u8], pattern: &str) -> Option<BinCaptures<'i>> {
     parse_bytes(input, &format!("^{}", pattern))
 }
 
-pub fn rparse<'i>(input: &'i str, pattern: &str) -> Option<&'i str> {
+pub fn rparse<'i>(input: &'i str, pattern: &str) -> Option<Captures<'i>> {
     parse(input, &format!("{}$", pattern))
 }
 
-pub fn rparse_bytes<'i>(input: &'i [u8], pattern: &str) -> Option<&'i [u8]> {
+pub fn rparse_bytes<'i>(input: &'i [u8], pattern: &str) -> Option<BinCaptures<'i>> {
     parse_bytes(input, &format!("{}$", pattern))
 }
 
-pub fn lparse_chomp<'i>(input: &mut &'i str, pattern: &'static str) -> Option<&'i str> {
+pub fn lparse_chomp<'i>(input: &mut &'i str, pattern: &str) -> Option<Captures<'i>> {
     let Some(result) = lparse(input, pattern) else { return None };
 
     // update input slice reference to unmatched part
-    *input = &input[result.len()..];
+    *input = &input[result.get(0).unwrap().as_str().len()..];
 
     Some(result)
 }
 
-pub fn lparse_chomp_bytes<'i>(input: &mut &'i [u8], pattern: &'static str) -> Option<&'i [u8]> {
+pub fn lparse_chomp_bytes<'i>(input: &mut &'i [u8], pattern: &str) -> Option<BinCaptures<'i>> {
     let Some(result) = lparse_bytes(input, pattern) else { return None };
 
     // update input slice reference to unmatched part
-    *input = &input[result.len()..];
+    *input = &input[result.get(0).unwrap().as_bytes().len()..];
 
     Some(result)
 }
 
-pub fn rparse_chomp<'i>(input: &mut &'i str, pattern: &'static str) -> Option<&'i str> {
+pub fn rparse_chomp<'i>(input: &mut &'i str, pattern: &str) -> Option<Captures<'i>> {
     let Some(result) = rparse(input, pattern) else { return None };
 
     // update input slice reference to unmatched part
-    *input = &input[result.len()..];
+    *input = &input[..input.len() - result.get(0).unwrap().as_str().len()];
 
     Some(result)
 }
 
-pub fn rparse_chomp_bytes<'i>(input: &mut &'i [u8], pattern: &'static str) -> Option<&'i [u8]> {
+pub fn rparse_chomp_bytes<'i>(input: &mut &'i [u8], pattern: &str) -> Option<BinCaptures<'i>> {
     let Some(result) = rparse_bytes(input, pattern) else { return None };
 
     // update input slice reference to unmatched part
-    *input = &input[result.len()..];
+    *input = &input[..input.len() - result.get(0).unwrap().as_bytes().len()];
 
     Some(result)
 }
 
-pub fn lparse_split<'i>(input: &'i str, pattern: &'static str) -> Option<(&'i str, &'i str)> {
+pub fn lparse_split<'i>(input: &'i str, pattern: &str) -> Option<Split<'i>> {
     let Some(result) = lparse(input, pattern) else { return None };
+    let len = result.get(0).unwrap().as_str().len();
 
-    Some((result, &input[result.len()..]))
+    Some(Split(result, &input[len..]))
 }
 
-pub fn lparse_split_bytes<'i>(
-    input: &'i [u8],
-    pattern: &'static str,
-) -> Option<(&'i [u8], &'i [u8])> {
+pub fn lparse_split_bytes<'i>(input: &'i [u8], pattern: &str) -> Option<BinSplit<'i>> {
     let Some(result) = lparse_bytes(input, pattern) else { return None };
+    let len = result.get(0).unwrap().as_bytes().len();
 
-    Some((result, &input[result.len()..]))
+    Some(BinSplit(result, &input[len..]))
 }
 
-pub fn rparse_split<'i>(input: &'i str, pattern: &'static str) -> Option<(&'i str, &'i str)> {
+pub fn rparse_split<'i>(input: &'i str, pattern: &str) -> Option<Split<'i>> {
     let Some(result) = rparse(input, pattern) else { return None };
+    let len = result.get(0).unwrap().as_str().len();
 
-    Some((result, &input[result.len()..]))
+    Some(Split(result, &input[..input.len() - len]))
 }
 
-pub fn rparse_split_bytes<'i>(
-    input: &'i [u8],
-    pattern: &'static str,
-) -> Option<(&'i [u8], &'i [u8])> {
+pub fn rparse_split_bytes<'i>(input: &'i [u8], pattern: &str) -> Option<BinSplit<'i>> {
     let Some(result) = rparse_bytes(input, pattern) else { return None };
+    let len = result.get(0).unwrap().as_bytes().len();
 
-    Some((result, &input[result.len()..]))
+    Some(BinSplit(result, &input[..input.len() - len]))
 }
 
 pub fn trim_ascii(mut input: &str) -> &str {

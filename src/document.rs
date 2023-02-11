@@ -1,7 +1,9 @@
+use std::sync::{Arc, RwLock};
 use std::{fmt::Debug, mem::swap, str};
 
 use egui::Vec2;
 
+use crate::dom::{Node, NodeData, OwnedNode};
 use crate::*;
 
 #[derive(Debug)]
@@ -14,9 +16,15 @@ pub enum Document {
         location: String,
         response_body: String,
     },
+    Parsed {
+        location: String,
+        response_body: String,
+        dom: Node,
+    },
     LaidOut {
         location: String,
         response_body: String,
+        dom: Node,
         display_list: Vec<paint::PaintText>,
         viewport: viewport::ViewportInfo,
     },
@@ -27,6 +35,7 @@ impl Default for Document {
         Self::LaidOut {
             location: "about:blank".to_owned(),
             response_body: "".to_owned(),
+            dom: Node::document(),
             display_list: vec![],
             viewport: Default::default(),
         }
@@ -46,10 +55,12 @@ impl Document {
             Document::LaidOut {
                 location,
                 response_body,
+                dom,
                 ..
-            } => Document::Loaded {
+            } => Document::Parsed {
                 location,
                 response_body,
+                dom,
             },
             other => other,
         }
@@ -60,6 +71,7 @@ impl Document {
             Document::None => "None",
             Document::Navigated { .. } => "Navigated",
             Document::Loaded { .. } => "Loaded",
+            Document::Parsed { .. } => "Parsed",
             Document::LaidOut { .. } => "LaidOut",
         }
     }

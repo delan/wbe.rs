@@ -8,24 +8,33 @@ use std::{
 };
 
 use rustls_connector::RustlsConnector;
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, trace};
 
 use crate::*;
 
 #[instrument]
 pub fn request(url: &str) -> eyre::Result<(BTreeMap<String, String>, Vec<u8>)> {
     let mut url = url;
-    let scheme = lparse_chomp(&mut url, "https?:").expect("failed to chomp url scheme");
+    let scheme = lparse_chomp(&mut url, "https?:")
+        .expect("failed to chomp url scheme")
+        .get(0)
+        .unwrap()
+        .as_str();
     lparse_chomp(&mut url, "//").expect("failed to chomp url //");
-    let (host, path) = lparse_split(url, "[^/]+").expect("failed to split url host/path");
-    let (hostname, port) = rparse_split(host, r":\d+").unwrap_or((
-        host,
-        match scheme {
-            "http:" => ":80",
-            "https:" => ":443",
-            _ => unreachable!(),
-        },
-    ));
+    let (host, path) = lparse_split(url, "[^/]+")
+        .expect("failed to split url host/path")
+        .into_pair();
+    let (port, hostname) = rparse_split(host, r":([0-9]+)")
+        .map(|x| x.into_pair())
+        .unwrap_or((
+            match scheme {
+                "http:" => ":80",
+                "https:" => ":443",
+                _ => unreachable!(),
+            },
+            host,
+        ));
+    trace!(url, scheme, host, path, hostname, port);
     let port = u16::from_str(&port[1..])?;
     let path = match path {
         "" => "/",
