@@ -1,5 +1,6 @@
 use std::ops::Deref;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use std::{env::args, mem::swap, str};
 
 use ab_glyph::ScaleFont;
@@ -360,6 +361,7 @@ impl Browser {
         //     size = ?self.document.size(),
         //     scroll_limit = ?self.document.scroll_limit(),
         // );
+        let start = Instant::now();
         self.next_document = match self.next_document.take() {
             Document::None => return Ok(()),
             Document::Navigated { location } => self.load(location)?,
@@ -374,8 +376,16 @@ impl Browser {
             } => self.layout(location, response_body, dom)?,
             document @ Document::LaidOut { .. } => document,
         };
+
+        let now = Instant::now();
+        info!(status = self.next_document.status(), duration = ?now.duration_since(start));
+
         if let Document::LaidOut { .. } = &self.next_document {
             self.document = self.next_document.take();
+
+            if option_env!("WBE_TIMING_MODE").is_some() {
+                std::process::exit(0);
+            }
         }
 
         Ok(())
@@ -429,16 +439,14 @@ impl eframe::App for Browser {
                                 ctx.pixels_per_point(),
                             )
                         {
-                            let document = self.document.take().invalidate_layout();
-                            if let Document::Parsed {
-                                location,
-                                response_body,
-                                dom,
-                            } = document
-                            {
-                                self.document = self.layout(location, response_body, dom).unwrap();
+                            if let Document::None = self.next_document {
+                                self.next_document = self.document.take().invalidate_layout();
                             } else {
-                                self.document = document;
+                                self.next_document = self.next_document.take().invalidate_layout();
+                            }
+                            if let Err(e) = self.tick() {
+                                error!("error: {}", e.to_string());
+                                panic!();
                             }
                         }
                     }
