@@ -9,6 +9,7 @@ use egui::{
 use eyre::bail;
 use tracing::{debug, error, info, instrument, trace};
 
+use unicode_segmentation::UnicodeSegmentation;
 use wbe::document::Document;
 use wbe::dom::{Node, NodeData};
 use wbe::font::FontInfo;
@@ -257,9 +258,12 @@ impl Browser {
                             HtmlWord::Space(_) => " ",
                             HtmlWord::Other(x) => x,
                         };
-                        for c in text.chars() {
-                            let glyph_id = font.ab.glyph_id(c);
-                            let advance = font.ab.h_advance(glyph_id) / viewport.scale;
+                        for word in text.split_word_bounds() {
+                            let advance = word
+                                .chars()
+                                .map(|c| font.ab.h_advance(font.ab.glyph_id(c)))
+                                .sum::<f32>()
+                                / viewport.scale;
                             let ascent = font.ab.ascent() / viewport.scale;
                             let height = font.ab.height() / viewport.scale;
                             if cursor.x + advance > x_max {
@@ -276,7 +280,7 @@ impl Browser {
                             max_ascent = max_ascent.max(ascent);
                             max_height = max_height.max(height);
                             let rect = Rect::from_min_size(cursor, vec2(advance, height));
-                            display_list.push(PaintText(rect, font.clone(), c.to_string()));
+                            display_list.push(PaintText(rect, font.clone(), word.to_string()));
                             cursor.x += advance;
                             swap(&mut font, &mut font2);
                             swap(&mut font, &mut font2);
