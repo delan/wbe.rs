@@ -13,7 +13,7 @@ use wbe::document::Document;
 use wbe::dom::{Node, NodeData};
 use wbe::font::FontInfo;
 use wbe::paint::PaintText;
-use wbe::parse::{html_token, HtmlToken};
+use wbe::parse::{html_token, html_word, HtmlToken, HtmlWord};
 use wbe::viewport::ViewportInfo;
 use wbe::*;
 
@@ -134,7 +134,7 @@ impl Browser {
         while !input.is_empty() {
             let (rest, token) = match html_token(input) {
                 Ok(result) => result,
-                Err(nom::Err::Incomplete(_)) => ("", HtmlToken::Text(input)),
+                // Err(nom::Err::Incomplete(_)) => ("", HtmlToken::Text(input)),
                 Err(e) => bail!("{}; input={:?}", e, input),
             };
             match token {
@@ -246,13 +246,18 @@ impl Browser {
             let descended = match &*children[j].name() {
                 "#text" => {
                     let value = children[j].value().unwrap();
-                    let mut value = &*value;
-                    while let Some(token) = lparse_chomp(&mut value, r"[\t\n\v\r ]+|.") {
-                        let mut token = token.get(0).unwrap().as_str();
-                        if lparse(token, r"[\t\n\v\r ]+").is_some() {
-                            token = " ";
-                        }
-                        for c in token.chars() {
+                    let mut input = &*value;
+                    while !input.is_empty() {
+                        let (rest, token) = match html_word(input) {
+                            Ok(result) => result,
+                            // Err(nom::Err::Incomplete(_)) => ("", HtmlWord::Other(input)),
+                            Err(e) => bail!("{}; input={:?}", e, input),
+                        };
+                        let text = match token {
+                            HtmlWord::Space(_) => " ",
+                            HtmlWord::Other(x) => x,
+                        };
+                        for c in text.chars() {
                             let glyph_id = font.ab.glyph_id(c);
                             let advance = font.ab.h_advance(glyph_id) / viewport.scale;
                             let ascent = font.ab.ascent() / viewport.scale;
@@ -276,6 +281,7 @@ impl Browser {
                             swap(&mut font, &mut font2);
                             swap(&mut font, &mut font2);
                         }
+                        input = rest;
                     }
 
                     false

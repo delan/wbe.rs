@@ -1,6 +1,6 @@
 use nom::{
     branch::alt,
-    bytes::streaming::{tag, tag_no_case, take_while, take_while1},
+    bytes::complete::{tag, tag_no_case, take_while, take_while1},
     character::complete::char,
     combinator::opt,
     multi::many0,
@@ -130,4 +130,20 @@ pub fn html_token(input: &str) -> IResult<&str, HtmlToken> {
     let (rest, text) = html_text(input)?;
 
     Ok((rest, HtmlToken::Text(text)))
+}
+
+#[derive(Debug)]
+pub enum HtmlWord<'i> {
+    Space(&'i str),
+    Other(&'i str),
+}
+
+pub fn html_word(input: &str) -> IResult<&str, HtmlWord> {
+    if let Ok((rest, text)) = html_space(input) {
+        return Ok((rest, HtmlWord::Space(text)));
+    }
+
+    let (rest, text) = take_while1(|c: char| !c.is_ascii_whitespace())(input)?;
+
+    Ok((rest, HtmlWord::Other(text)))
 }
