@@ -1,19 +1,19 @@
-use std::ops::Deref;
-use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use std::{env::args, mem::swap, str};
 
 use ab_glyph::ScaleFont;
 use egui::{
     pos2, vec2, Align, Align2, Color32, FontData, FontDefinitions, FontFamily, Frame, Layout, Rect,
-    Stroke, TextEdit, Ui, Vec2,
+    TextEdit, Ui, Vec2,
 };
+use eyre::bail;
 use tracing::{debug, error, info, instrument, trace};
 
 use wbe::document::Document;
 use wbe::dom::{Node, NodeData};
 use wbe::font::FontInfo;
 use wbe::paint::PaintText;
+use wbe::parse::{html_token, HtmlToken};
 use wbe::viewport::ViewportInfo;
 use wbe::*;
 
@@ -128,83 +128,73 @@ impl Browser {
     fn parse(&mut self, location: String, response_body: String) -> eyre::Result<Document> {
         let mut parent = Node::new(NodeData::Document);
         let mut stack = vec![parent.clone()];
+        let mut names_stack: Vec<&str> = vec![];
         let mut input = &*response_body;
 
-        // TODO this should really use nom
-        let ident = r"[0-9A-Za-z!?:-]+";
-        let space = r"[\t\n\v\r ]";
-        let attr = format!(r#"(?:[^"'>{}]*|"[^"]*"|'[^']*')"#, space,);
-        let tag = format!(
-            r"<(/?)({})({}+{}(?:{}*={}*{})?)*{}*/?>",
-            ident, space, ident, space, space, attr, space
-        );
-        let script = format!(
-            r"<(?i-u:script)({}+{}(?:{}*={}*{})?)*{}*>(.*?)</(?i-u:script){}*>",
-            space, ident, space, space, attr, space, space
-        );
-        let style = format!(
-            r"<(?i-u:style)({}+{}(?:{}*={}*{})?)*{}*>(.*?)</(?i-u:style){}*>",
-            space, ident, space, space, attr, space, space
-        );
-        let comment = r"<!--(.*?)-->";
-        let pattern = format!(r"{}|{}|{}|{}|<|[^<]+", comment, script, style, tag);
-
-        while let Some(token) = lparse_chomp(&mut input, &pattern) {
-            let token = token.get(0).unwrap().as_str();
-            if let Some(comment) = lparse(token, comment) {
-                parent.append(&[Node::comment(comment.get(1).unwrap().as_str().to_owned())]);
-            } else if let Some(script) = lparse(token, &script) {
-                // TODO attrs
-                parent.append(&[Node::element("script".to_owned(), vec![])
-                    .append(&[Node::text(script.get(2).unwrap().as_str().to_owned())])]);
-            } else if let Some(style) = lparse(token, &style) {
-                // TODO attrs
-                parent.append(&[Node::element("style".to_owned(), vec![])
-                    .append(&[Node::text(style.get(2).unwrap().as_str().to_owned())])]);
-            } else if let Some(tag) = lparse(token, &tag) {
-                let name = tag.get(2).unwrap().as_str().to_ascii_lowercase();
-                if tag.get(1).unwrap().as_str() == "/" {
-                    loop {
-                        let old = stack.pop().expect("FIXME");
-                        parent = parent.parent().expect("FIXME");
-                        if old.name() == name {
-                            break;
-                        }
-                    }
-                    continue;
+        while !input.is_empty() {
+            let (rest, token) = match html_token(input) {
+                Ok(result) => result,
+                Err(nom::Err::Incomplete(_)) => ("", HtmlToken::Text(input)),
+                Err(e) => bail!("{}; input={:?}", e, input),
+            };
+            match token {
+                HtmlToken::Comment(text) => {
+                    parent.append(&[Node::comment(text.to_owned())]);
                 }
-                let element = Node::element(name.to_owned(), vec![]);
+                HtmlToken::Script(attrs, text) => {
+                    // TODO attrs
+                    parent.append(&[Node::element("script".to_owned(), vec![])
+                        .append(&[Node::text(text.to_owned())])]);
+                }
+                HtmlToken::Style(attrs, text) => {
+                    // TODO attrs
+                    parent.append(&[Node::element("style".to_owned(), vec![])
+                        .append(&[Node::text(text.to_owned())])]);
+                }
+                HtmlToken::Tag(true, name, attrs) => {
+                    if let Some((i, _)) = names_stack
+                        .iter()
+                        .enumerate()
+                        .rfind(|(_, x)| x.eq_ignore_ascii_case(name))
+                    {
+                        for _ in 0..(names_stack.len() - i) {
+                            let _ = stack.pop().unwrap();
+                            let _ = names_stack.pop().unwrap();
+                            parent = parent.parent().unwrap();
+                        }
+                    } else {
+                        error!("failed to find match for closing tag: {:?}", name);
+                    }
+                }
+                HtmlToken::Tag(false, name, attrs) => {
+                    let element = Node::element(name.to_owned(), vec![]);
 
-                for &(child_names, suffix) in NO_NEST {
-                    if child_names.contains(&&*name) {
-                        let parent_names = parent
-                            .ancestors_inclusive()
-                            .iter()
-                            .rev()
-                            .map(|x| x.name())
-                            .collect::<Vec<_>>();
-                        trace!(name, ?child_names, ?suffix, ?parent_names);
-                        let parent_names =
-                            parent_names.iter().map(|x| x.deref()).collect::<Vec<_>>();
-                        if parent_names.ends_with(suffix) {
-                            trace!(true, name, ?child_names, ?suffix, ?parent_names);
-                            for _ in 0..suffix.len() {
-                                stack.pop();
-                                parent = parent.parent().unwrap();
+                    for &(child_names, suffix) in NO_NEST {
+                        if child_names.contains(&&*name) {
+                            if names_stack.ends_with(suffix) {
+                                trace!(true, name, ?child_names, ?suffix, ?names_stack);
+                                for _ in 0..suffix.len() {
+                                    let _ = stack.pop().unwrap();
+                                    let _ = names_stack.pop().unwrap();
+                                    parent = parent.parent().unwrap();
+                                }
                             }
                         }
                     }
-                }
 
-                parent.append(&[element.clone()]);
+                    parent.append(&[element.clone()]);
 
-                if !SELF_CLOSING.contains(&&*name) {
-                    stack.push(element.clone());
-                    parent = element;
+                    if !SELF_CLOSING.contains(&&*name) {
+                        stack.push(element.clone());
+                        names_stack.push(name);
+                        parent = element;
+                    }
                 }
-            } else {
-                parent.append(&[Node::text(token.to_owned())]);
-            };
+                HtmlToken::Text(text) => {
+                    parent.append(&[Node::text(text.to_owned())]);
+                }
+            }
+            input = rest;
         }
 
         let dom = stack[0].clone();

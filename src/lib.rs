@@ -3,6 +3,7 @@ pub mod dom;
 pub mod font;
 pub mod http;
 pub mod paint;
+pub mod parse;
 pub mod viewport;
 
 use std::{
