@@ -3,15 +3,27 @@ use std::{
     sync::{Arc, RwLock, Weak},
 };
 
+use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 use tracing::{instrument, trace};
 
 use crate::*;
+
+pub type NodeRead<'n, T> = RwLockReadGuardRef<'n, OwnedNode, T>;
+pub type NodeWrite<'n, T> = RwLockWriteGuardRefMut<'n, OwnedNode, T>;
 
 #[derive(Debug)]
 pub struct OwnedNode {
     pub parent: Weak<RwLock<OwnedNode>>,
     pub children: Vec<Node>,
     pub inner: NodeData,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NodeType {
+    Document,
+    Element,
+    Text,
+    Comment,
 }
 
 #[derive(Debug, Clone)]
@@ -30,24 +42,24 @@ impl Debug for Node {
         write!(
             f,
             "{}",
-            format!("{:?}", r!(self.0)).strip_prefix("Owned").unwrap()
+            format!("{:?}", self.read()).strip_prefix("Owned").unwrap()
         )
     }
 }
 
 impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &r!(self.0).inner {
+        match &*self.data() {
             NodeData::Document => {
                 write!(f, "\x1B[1;36m#document(\x1B[0m")?;
-                for (i, child) in r!(self.0).children.iter().enumerate() {
+                for (i, child) in self.children().iter().enumerate() {
                     write!(f, "{}{}", if i > 0 { " " } else { "" }, child)?;
                 }
                 write!(f, "\x1B[1;36m)\x1B[0m")
             }
             NodeData::Element(n, _) => {
                 write!(f, "\x1B[1;36m{}(\x1B[0m", n)?;
-                for (i, child) in r!(self.0).children.iter().enumerate() {
+                for (i, child) in self.children().iter().enumerate() {
                     write!(f, "{}{}", if i > 0 { " " } else { "" }, child)?;
                 }
                 write!(f, "\x1B[1;36m)\x1B[0m")
@@ -101,8 +113,8 @@ impl Node {
     pub fn append(&self, children: &[Node]) -> Self {
         for child in children {
             trace!(%self, %child);
-            w!(child.0).parent = Arc::downgrade(&self.0);
-            w!(self.0).children.push(child.clone());
+            child.write().parent = Arc::downgrade(&self.0);
+            self.write().children.push(child.clone());
             trace!(%self, %child);
         }
 
@@ -111,45 +123,51 @@ impl Node {
 
     #[instrument(skip(self))]
     pub fn parent(&self) -> Option<Self> {
-        // trace!(%self, parent = %r!(self.0).parent.upgrade().map(Self).unwrap());
-        r!(self.0).parent.upgrade().map(Self)
+        self.read().parent.upgrade().map(Self)
     }
 
-    pub fn data(&self) -> NodeData {
-        r!(self.0).inner.clone()
+    pub fn read(&self) -> NodeRead<OwnedNode> {
+        NodeRead::new(self.0.read().unwrap())
     }
 
-    pub fn name(&self) -> String {
-        match &r!(self.0).inner {
-            NodeData::Document => "#document".to_owned(),
-            NodeData::Element(n, _) => n.clone(),
-            NodeData::Text(_) => "#text".to_owned(),
-            NodeData::Comment(_) => "#comment".to_owned(),
-        }
+    pub fn write(&self) -> NodeWrite<OwnedNode> {
+        NodeWrite::new(self.0.write().unwrap())
     }
 
-    pub fn value(&self) -> Option<String> {
-        match &r!(self.0).inner {
-            NodeData::Document => None,
-            NodeData::Element(_, _) => None,
-            NodeData::Text(x) => Some(x.clone()),
-            NodeData::Comment(x) => Some(x.clone()),
-        }
+    pub fn data(&self) -> NodeRead<NodeData> {
+        self.read().map(|x| &x.inner)
     }
 
-    // FIXME https://stackoverflow.com/a/63523617
-    pub fn children(&self) -> Vec<Node> {
-        r!(self.0).children.clone()
+    pub fn r#type(&self) -> NodeType {
+        *self.read().map(|x| match &x.inner {
+            NodeData::Document => &NodeType::Document,
+            NodeData::Element(_, _) => &NodeType::Element,
+            NodeData::Text(_) => &NodeType::Text,
+            NodeData::Comment(_) => &NodeType::Comment,
+        })
     }
 
-    pub fn ancestors_inclusive(&self) -> Vec<Node> {
-        let mut result = vec![self.clone()];
-        let mut node = self.clone();
-        while let Some(parent) = node.parent() {
-            result.push(parent.clone());
-            node = parent;
-        }
+    pub fn name(&self) -> NodeRead<str> {
+        self.read().map(|x| match &x.inner {
+            NodeData::Document => "#document",
+            NodeData::Element(n, _) => &n,
+            NodeData::Text(_) => "#text",
+            NodeData::Comment(_) => "#comment",
+        })
+    }
 
-        result
+    pub fn value(&self) -> Option<NodeRead<str>> {
+        self.read()
+            .try_map(|x| match &x.inner {
+                NodeData::Document => Err(()),
+                NodeData::Element(_, _) => Err(()),
+                NodeData::Text(text) => Ok(&**text),
+                NodeData::Comment(text) => Ok(&**text),
+            })
+            .ok()
+    }
+
+    pub fn children(&self) -> NodeRead<[Node]> {
+        self.read().map(|x| &*x.children)
     }
 }

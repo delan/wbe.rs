@@ -1,9 +1,8 @@
-use std::sync::{Arc, RwLock};
 use std::{fmt::Debug, mem::swap, str};
 
 use egui::Vec2;
 
-use crate::dom::{Node, NodeData, OwnedNode};
+use crate::dom::Node;
 use crate::*;
 
 #[derive(Debug)]

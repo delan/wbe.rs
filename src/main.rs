@@ -11,7 +11,7 @@ use tracing::{debug, error, info, instrument, trace};
 
 use unicode_segmentation::UnicodeSegmentation;
 use wbe::document::Document;
-use wbe::dom::{Node, NodeData};
+use wbe::dom::{Node, NodeData, NodeType};
 use wbe::font::FontInfo;
 use wbe::paint::PaintText;
 use wbe::parse::{html_token, html_word, HtmlToken, HtmlWord};
@@ -239,13 +239,13 @@ impl Browser {
         let mut max_height = 0.0f32;
 
         let mut parent = dom.clone();
-        let mut children = parent.children();
+        let mut children = dom.children().iter().cloned().collect::<Vec<_>>();
         let mut stack = vec![];
         let mut j = 0;
         while j < children.len() {
-            trace!(parent = %parent.data(), child = %children[j].data());
-            let descended = match &*children[j].name() {
-                "#text" => {
+            trace!(parent = %*parent.data(), child = %*children[j].data());
+            let descended = match children[j].r#type() {
+                NodeType::Text => {
                     let value = children[j].value().unwrap();
                     let mut input = &*value;
                     while !input.is_empty() {
@@ -290,18 +290,18 @@ impl Browser {
 
                     false
                 }
-                "#document" => unreachable!(),
-                "#comment" => false,
-                _other => {
+                NodeType::Document => unreachable!(),
+                NodeType::Comment => false,
+                NodeType::Element => {
                     let mut pushed = false;
                     if j + 1 < children.len() {
                         stack.push((parent.clone(), j + 1));
                         pushed = true;
                     }
                     parent = children[j].clone();
-                    children = parent.children();
+                    children = parent.children().to_owned();
                     j = 0;
-                    trace!(new_parent_down = %parent.data(), pushed);
+                    trace!(new_parent_down = %*parent.data(), pushed);
 
                     true
                 }
@@ -312,9 +312,9 @@ impl Browser {
             if j >= children.len() {
                 if let Some(previous) = stack.pop() {
                     parent = previous.0;
-                    children = parent.children();
+                    children = parent.children().to_owned();
                     j = previous.1;
-                    trace!(new_parent_up = %parent.data());
+                    trace!(new_parent_up = %*parent.data());
                 }
             }
         }

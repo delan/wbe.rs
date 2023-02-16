@@ -32,20 +32,6 @@ macro_rules! dbg_bytes {
     };
 }
 
-#[macro_export]
-macro_rules! w {
-    ($node:expr) => {
-        $node.write().unwrap()
-    };
-}
-
-#[macro_export]
-macro_rules! r {
-    ($node:expr) => {
-        $node.read().unwrap()
-    };
-}
-
 pub struct Split<'i>(Captures<'i>, &'i str);
 pub struct BinSplit<'i>(BinCaptures<'i>, &'i [u8]);
 impl<'i> Split<'i> {
