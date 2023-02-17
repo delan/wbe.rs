@@ -19,6 +19,10 @@ impl Default for ViewportInfo {
 }
 
 impl ViewportInfo {
+    pub fn is_valid(&self) -> bool {
+        return !self.rect.any_nan() && !self.scale.is_nan();
+    }
+
     #[instrument(skip(self, viewport_rect, pixels_per_point))]
     pub fn update(&mut self, viewport_rect: Rect, pixels_per_point: f32) -> &mut Self {
         if viewport_rect != self.rect || pixels_per_point != self.scale {

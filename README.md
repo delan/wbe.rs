@@ -28,14 +28,8 @@ this project loosely implements the [Web Browser Engineering](https://browser.en
 ## bonus features
 
 * [x] location bar with double buffering
-* async
-    * [ ] request
-    * [ ] parse
-    * [ ] layout
-* incremental
-    * [ ] request
-    * [ ] parse
-    * [ ] layout
+* [x] async load/parse/layout
+* [ ] incremental load/parse/layout
 * html parser
     * [x] correct handling of [end-tag-with-attributes error](https://html.spec.whatwg.org/#parse-error-end-tag-with-attributes)
     * [x] correct handling of [end-tag-with-trailing-solidus error](https://html.spec.whatwg.org/#parse-error-end-tag-with-trailing-solidus)

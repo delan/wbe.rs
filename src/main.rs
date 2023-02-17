@@ -1,39 +1,19 @@
-use std::time::Instant;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, RwLock};
+use std::thread;
 use std::{env::args, str};
 
+use backtrace::Backtrace;
 use egui::{
-    vec2, Align, Align2, Color32, FontData, FontDefinitions, FontFamily, Frame, Rect, TextEdit, Ui,
+    vec2, Align, Color32, Context, FontData, FontDefinitions, FontFamily, Frame, Rect, TextEdit,
     Vec2,
 };
-use eyre::bail;
-use tracing::{debug, error, info, instrument, trace};
+use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
+use tracing::{error, instrument, trace, warn};
 
-use wbe::document::Document;
-use wbe::dom::{Node, NodeData};
-use wbe::layout::Layout;
-use wbe::parse::{html_token, HtmlToken};
+use wbe::document::{Document, OwnedDocument};
 use wbe::viewport::ViewportInfo;
 use wbe::*;
-
-// ([if the child is one of these], [the stack must not end with this sequence])
-const NO_NEST: &[(&[&str], &[&str])] = &[
-    (
-        &["p", "table", "form", "h1", "h2", "h3", "h4", "h5", "h6"],
-        &["p"],
-    ),
-    (&["li"], &["li"]),
-    (&["dt", "dd"], &["dt"]),
-    (&["dt", "dd"], &["dd"]),
-    (&["tr"], &["tr"]),
-    (&["tr"], &["tr", "td"]),
-    (&["tr"], &["tr", "th"]),
-    (&["td", "th"], &["td"]),
-    (&["td", "th"], &["th"]),
-];
-const SELF_CLOSING: &[&str] = &[
-    "!doctype", "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
-    "param", "source", "track", "wbr",
-];
 
 fn main() -> eyre::Result<()> {
     // log to stdout (level configurable by RUST_LOG=debug)
@@ -42,6 +22,75 @@ fn main() -> eyre::Result<()> {
     let location = args()
         .nth(1)
         .unwrap_or("http://example.org/index.html".to_owned());
+
+    let browser = Browser::wrap(OwnedBrowser {
+        location,
+        ..Default::default()
+    });
+
+    let (app, render_request_rx) = App::new(browser.clone());
+    let renderer_thread = thread::spawn(move || loop {
+        // wait for a request from the egui thread
+        let Ok(mut request) = render_request_rx.recv() else { return };
+
+        // discard all but the last pending request, to avoid wasting time
+        // rendering against stale viewport geometry
+        for next in render_request_rx.try_iter() {
+            request = next;
+        }
+
+        if !request.viewport.is_valid() {
+            warn!("renderer received render request, but viewport was invalid");
+            continue;
+        }
+
+        let mut next_document = browser.read().next_document.write().take();
+        if matches!(next_document, OwnedDocument::None) {
+            warn!("renderer received render request, but there was no next_document");
+            continue;
+        }
+
+        browser.set_status(RenderStatus::Load);
+        request.egui_ctx.request_repaint();
+
+        loop {
+            next_document = match next_document {
+                OwnedDocument::None => break,
+                result @ OwnedDocument::Navigated { .. } => {
+                    browser.set_status(RenderStatus::Load);
+                    request.egui_ctx.request_repaint();
+                    result
+                }
+                result @ OwnedDocument::Loaded { .. } => {
+                    browser.set_status(RenderStatus::Parse);
+                    request.egui_ctx.request_repaint();
+                    result
+                }
+                result @ OwnedDocument::Parsed { .. } => {
+                    browser.set_status(RenderStatus::Layout);
+                    request.egui_ctx.request_repaint();
+                    result
+                }
+                result @ OwnedDocument::LaidOut { .. } => {
+                    browser.write().document = Document::wrap(result);
+                    if option_env!("WBE_TIMING_MODE").is_some() {
+                        std::process::exit(0);
+                    }
+                    break;
+                }
+            };
+            next_document = match next_document.tick(request.viewport.clone()) {
+                Ok(result) => result,
+                Err(e) => {
+                    error!("error: {}", e.to_string());
+                    break;
+                }
+            };
+        }
+
+        browser.set_status(RenderStatus::Done);
+        request.egui_ctx.request_repaint();
+    });
 
     let options = eframe::NativeOptions {
         initial_window_size: Some(vec2(800.0, 600.0)),
@@ -61,241 +110,147 @@ fn main() -> eyre::Result<()> {
                     .insert(FontFamily::Name(name.into()), vec![name.to_owned()]);
             }
             cc.egui_ctx.set_fonts(font_definitions);
-            let mut browser = Browser {
-                location,
-                ..Default::default()
-            };
-            browser.go();
 
-            Box::new(browser)
+            Box::new(app)
         }),
     )
     .unwrap();
 
+    renderer_thread.join().unwrap();
+
     Ok(())
 }
 
-struct Browser {
-    tick: usize,
+pub struct App {
+    browser: Browser,
+    render_request_tx: Sender<RenderRequest>,
+}
+
+pub struct RenderRequest {
+    viewport: ViewportInfo,
+    egui_ctx: Context,
+}
+
+impl App {
+    fn new(browser: Browser) -> (Self, Receiver<RenderRequest>) {
+        let (render_request_tx, render_request_rx) = channel();
+
+        (
+            Self {
+                browser,
+                render_request_tx,
+            },
+            render_request_rx,
+        )
+    }
+
+    #[instrument(skip(self))]
+    fn go(&mut self, egui_ctx: Context) {
+        let location = self.browser.read().location.clone();
+        self.browser.set_status(RenderStatus::Load);
+        *self.browser.write().next_document.write() = OwnedDocument::Navigated { location };
+        self.render_request_tx
+            .send(RenderRequest {
+                viewport: self.browser.read().viewport.clone(),
+                egui_ctx,
+            })
+            .unwrap();
+    }
+}
+
+#[derive(Clone)]
+pub struct Browser(Arc<RwLock<OwnedBrowser>>);
+
+pub type BrowserRead<'n, T> = RwLockReadGuardRef<'n, OwnedBrowser, T>;
+pub type BrowserWrite<'n, T> = RwLockWriteGuardRefMut<'n, OwnedBrowser, T>;
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum RenderStatus {
+    Load,
+    Parse,
+    Layout,
+    Done,
+}
+
+impl Browser {
+    pub fn wrap(inner: OwnedBrowser) -> Self {
+        Self(Arc::new(RwLock::new(inner)))
+    }
+
+    pub fn read(&self) -> BrowserRead<OwnedBrowser> {
+        if option_env!("WBE_DEBUG_RWLOCK").is_some() {
+            dump_backtrace(Backtrace::new());
+        }
+        BrowserRead::new(self.0.read().unwrap())
+    }
+
+    pub fn write(&self) -> BrowserWrite<OwnedBrowser> {
+        if option_env!("WBE_DEBUG_RWLOCK").is_some() {
+            dump_backtrace(Backtrace::new());
+        }
+        BrowserWrite::new(self.0.write().unwrap())
+    }
+
+    pub fn location(&self) -> BrowserRead<str> {
+        self.read().map(|x| &*x.location)
+    }
+
+    pub fn location_mut(&self) -> BrowserWrite<String> {
+        self.write().map_mut(|x| &mut x.location)
+    }
+
+    pub fn set_status(&self, status: RenderStatus) {
+        self.write().status = status;
+    }
+}
+
+pub struct OwnedBrowser {
     location: String,
     document: Document,
     next_document: Document,
     viewport: ViewportInfo,
     scroll: Vec2,
+    status: RenderStatus,
+    first_update: bool,
 }
 
-impl Default for Browser {
+impl Default for OwnedBrowser {
     fn default() -> Self {
         Self {
-            tick: Default::default(),
             location: Default::default(),
             document: Default::default(),
             next_document: Default::default(),
             viewport: Default::default(),
             scroll: Vec2::ZERO,
+            status: RenderStatus::Done,
+            first_update: true,
         }
     }
 }
 
-impl Browser {
-    #[instrument(skip(self))]
-    fn go(&mut self) {
-        let location = self.location.clone();
-        self.next_document = Document::Navigated { location };
-    }
-
-    #[instrument(skip(self))]
-    fn load(&mut self, location: String) -> eyre::Result<Document> {
-        let (_headers, body) = http::request(&self.location)?;
-
-        Ok(Document::Loaded {
-            location,
-            // TODO: hard-coding utf-8 is not correct in practice
-            response_body: str::from_utf8(&body)?.to_owned(),
-        })
-    }
-
-    #[instrument(skip(self, response_body))]
-    fn parse(&mut self, location: String, response_body: String) -> eyre::Result<Document> {
-        let mut parent = Node::new(NodeData::Document);
-        let mut stack = vec![parent.clone()];
-        let mut names_stack: Vec<&str> = vec![];
-        let mut input = &*response_body;
-
-        while !input.is_empty() {
-            let (rest, token) = match html_token(input) {
-                Ok(result) => result,
-                // Err(nom::Err::Incomplete(_)) => ("", HtmlToken::Text(input)),
-                Err(e) => bail!("{}; input={:?}", e, input),
-            };
-            match token {
-                HtmlToken::Comment(text) => {
-                    parent.append(&[Node::comment(text.to_owned())]);
-                }
-                HtmlToken::Script(_attrs, text) => {
-                    // TODO attrs
-                    parent.append(&[Node::element("script".to_owned(), vec![])
-                        .append(&[Node::text(text.to_owned())])]);
-                }
-                HtmlToken::Style(_attrs, text) => {
-                    // TODO attrs
-                    parent.append(&[Node::element("style".to_owned(), vec![])
-                        .append(&[Node::text(text.to_owned())])]);
-                }
-                HtmlToken::Tag(true, name, _attrs) => {
-                    if let Some((i, _)) = names_stack
-                        .iter()
-                        .enumerate()
-                        .rfind(|(_, x)| x.eq_ignore_ascii_case(name))
-                    {
-                        for _ in 0..(names_stack.len() - i) {
-                            let _ = stack.pop().unwrap();
-                            let _ = names_stack.pop().unwrap();
-                            parent = parent.parent().unwrap();
-                        }
-                    } else {
-                        error!("failed to find match for closing tag: {:?}", name);
-                    }
-                }
-                HtmlToken::Tag(false, name, _attrs) => {
-                    let element = Node::element(name.to_owned(), vec![]);
-
-                    for &(child_names, suffix) in NO_NEST {
-                        if child_names.contains(&&*name) {
-                            if names_stack.ends_with(suffix) {
-                                trace!(true, name, ?child_names, ?suffix, ?names_stack);
-                                for _ in 0..suffix.len() {
-                                    let _ = stack.pop().unwrap();
-                                    let _ = names_stack.pop().unwrap();
-                                    parent = parent.parent().unwrap();
-                                }
-                            }
-                        }
-                    }
-
-                    parent.append(&[element.clone()]);
-
-                    if !SELF_CLOSING.contains(&&*name) {
-                        stack.push(element.clone());
-                        names_stack.push(name);
-                        parent = element;
-                    }
-                }
-                HtmlToken::Text(text) => {
-                    parent.append(&[Node::text(text.to_owned())]);
-                }
-            }
-            input = rest;
-        }
-
-        let dom = stack[0].clone();
-        debug!(%dom);
-
-        Ok(Document::Parsed {
-            location,
-            response_body,
-            dom,
-        })
-    }
-
-    #[instrument(skip(self, response_body, dom))]
-    fn layout(
-        &mut self,
-        location: String,
-        response_body: String,
-        dom: Node,
-    ) -> eyre::Result<Document> {
-        let viewport = self.viewport.clone();
-        let layout = Layout::document(dom.clone());
-        layout.layout(&viewport)?;
-
-        Ok(Document::LaidOut {
-            location,
-            response_body,
-            dom,
-            layout,
-            viewport,
-        })
-    }
-
-    #[instrument(skip(self, ui, layout))]
-    fn paint(&self, ui: &Ui, layout: &Layout, viewport: &ViewportInfo) {
-        let painter = ui.painter();
-        for paint in &*layout.display_list() {
-            let rect = paint.rect().translate(-self.scroll);
-            if rect.intersects(viewport.rect) {
-                // painter.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::from_rgb(255, 0, 255)));
-                painter.text(
-                    rect.min,
-                    Align2::LEFT_TOP,
-                    paint.text(),
-                    paint.font().clone(),
-                    Color32::BLACK,
-                );
-            }
-        }
-    }
-
-    #[instrument(skip(self))]
-    fn tick(&mut self) -> eyre::Result<()> {
-        // trace!(tick = self.tick);
-        self.tick += 1;
-
-        // debug!(
-        //     document = self.document.status(),
-        //     next_document = self.next_document.status(),
-        //     size = ?self.document.size(),
-        //     scroll_limit = ?self.document.scroll_limit(),
-        // );
-        let start = Instant::now();
-        self.next_document = match self.next_document.take() {
-            Document::None => return Ok(()),
-            Document::Navigated { location } => self.load(location)?,
-            Document::Loaded {
-                location,
-                response_body,
-            } => self.parse(location, response_body)?,
-            Document::Parsed {
-                location,
-                response_body,
-                dom,
-            } => self.layout(location, response_body, dom)?,
-            document @ Document::LaidOut { .. } => document,
-        };
-
-        let now = Instant::now();
-        info!(status = self.next_document.status(), duration = ?now.duration_since(start));
-
-        if let Document::LaidOut { .. } = &self.next_document {
-            self.document = self.next_document.take();
-
-            if option_env!("WBE_TIMING_MODE").is_some() {
-                std::process::exit(0);
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl eframe::App for Browser {
+impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
-        if let Err(e) = self.tick() {
-            error!("error: {}", e.to_string());
-            panic!();
-        }
-
         egui::TopBottomPanel::top("location").show(ctx, |ui| {
             ui.allocate_ui_with_layout(
                 ui.available_size(),
                 egui::Layout::right_to_left(Align::Center),
                 |ui| {
                     if ui.button("go").clicked() {
-                        self.go();
+                        self.go(ctx.clone());
+                    }
+                    let status = self.browser.read().status;
+                    if status != RenderStatus::Done {
+                        ui.spinner();
+                        ui.label(match status {
+                            RenderStatus::Load => "load",
+                            RenderStatus::Parse => "parse",
+                            RenderStatus::Layout => "layout",
+                            RenderStatus::Done => unreachable!(),
+                        });
                     }
                     ui.add_sized(
                         ui.available_size(),
-                        TextEdit::singleline(&mut self.location),
+                        TextEdit::singleline(&mut *self.browser.location_mut()),
                     );
                 },
             );
@@ -323,7 +278,7 @@ impl eframe::App for Browser {
                             let inner_position = ui.cursor().min;
 
                             // e.g. [0 50]
-                            self.scroll = outer_position - inner_position;
+                            self.browser.write().scroll = outer_position - inner_position;
 
                             // e.g. [788 564]
                             let client_size = ui.available_size();
@@ -335,9 +290,16 @@ impl eframe::App for Browser {
                         // e.g. [788 564]
                         let mut scroll_size = viewport_rect.size();
 
-                        if let Document::LaidOut {
+                        let document = self.browser.read().document.clone();
+                        let document = document.write();
+                        let mut browser = self.browser.write();
+                        let new_viewport = browser
+                            .viewport
+                            .update(viewport_rect, ctx.pixels_per_point())
+                            .clone();
+                        if let OwnedDocument::LaidOut {
                             layout, viewport, ..
-                        } = &self.document
+                        } = &*document
                         {
                             // expand scroll_rect where needed to fit page contents
                             scroll_size.x = scroll_size.x.max(layout.read().rect.width());
@@ -345,37 +307,51 @@ impl eframe::App for Browser {
 
                             // paint the layout tree translated by -self.scroll (since we do the
                             // translate ourselves and not ScrollArea, it’s not cheating)
-                            self.paint(ui, layout, viewport);
+                            OwnedDocument::paint(ui, layout, viewport, browser.scroll);
 
-                            if viewport
-                                != self.viewport.update(viewport_rect, ctx.pixels_per_point())
-                            {
-                                if let Document::None = self.next_document {
-                                    self.next_document = self.document.take().invalidate_layout();
+                            if *viewport != new_viewport {
+                                let has_next_document =
+                                    !matches!(*browser.next_document.read(), OwnedDocument::None);
+                                if has_next_document {
+                                    let next_document =
+                                        browser.next_document.write().take().invalidate_layout();
+                                    browser.next_document = Document::wrap(next_document);
                                 } else {
-                                    self.next_document =
-                                        self.next_document.take().invalidate_layout();
+                                    let next_document = document.invalidate_layout();
+                                    browser.next_document = Document::wrap(next_document);
                                 }
-                                if let Err(e) = self.tick() {
-                                    error!("error: {}", e.to_string());
-                                    panic!();
-                                }
+                                self.render_request_tx
+                                    .send(RenderRequest {
+                                        viewport: browser.viewport.clone(),
+                                        egui_ctx: ctx.clone(),
+                                    })
+                                    .unwrap();
                             }
                         }
 
-                        let layout_rect = match &self.document {
-                            Document::LaidOut { layout, .. } => layout.read().rect,
+                        let layout_rect = match &*document {
+                            OwnedDocument::LaidOut { layout, .. } => layout.read().rect,
                             _ => Rect::NAN,
                         };
                         trace!(
                             ?outer_rect, inner_rect = ?ui.cursor(),
                             ?layout_rect, ?viewport_rect,
-                            ?scroll_size, scroll = ?self.scroll,
+                            ?scroll_size, scroll = ?self.browser.read().scroll,
                         );
 
                         // set range of scrollbars
                         ui.set_min_size(scroll_size);
                     });
             });
+
+        // now that we have a valid viewport, go if needed
+        assert!(self.browser.read().viewport.is_valid());
+        let first_update = self.browser.read().first_update;
+        if first_update {
+            self.browser.write().first_update = false;
+            if !self.browser.read().location.is_empty() {
+                self.go(ctx.clone());
+            }
+        }
     }
 }
