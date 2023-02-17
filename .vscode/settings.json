@@ -1,0 +1,5 @@
+{
+    "rust-analyzer.cargo.extraEnv": {
+        "WBE_FONT_PATH": "/dev/null",
+    }
+}
