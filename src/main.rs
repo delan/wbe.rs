@@ -1,29 +1,18 @@
 use std::time::Instant;
-use std::{env::args, mem::swap, str};
+use std::{env::args, str};
 
-use ab_glyph::ScaleFont;
 use egui::{
-    pos2, vec2, Align, Align2, Color32, FontData, FontDefinitions, FontFamily, Frame, Layout, Rect,
-    TextEdit, Ui, Vec2,
+    vec2, Align, Align2, Color32, FontData, FontDefinitions, FontFamily, Frame, TextEdit, Ui, Vec2,
 };
 use eyre::bail;
 use tracing::{debug, error, info, instrument, trace};
 
-use unicode_segmentation::UnicodeSegmentation;
 use wbe::document::Document;
-use wbe::dom::{Node, NodeData, NodeType};
-use wbe::font::FontInfo;
-use wbe::paint::PaintText;
-use wbe::parse::{html_token, html_word, HtmlToken, HtmlWord};
+use wbe::dom::{Node, NodeData};
+use wbe::layout::Layout;
+use wbe::parse::{html_token, HtmlToken};
 use wbe::viewport::ViewportInfo;
 use wbe::*;
-
-// to squelch rust-analyzer error on FONT_PATH in vscode, set
-// WBE_FONT_PATH to /dev/null in rust-analyzer.cargo.extraEnv
-const MARGIN: f32 = 16.0;
-const FONT_SIZE: f32 = 16.0;
-const FONT_NAME: &str = "Times New Roman";
-const FONT_DATA: &[u8] = include_bytes!(env!("WBE_FONT_PATH"));
 
 // ([if the child is one of these], [the stack must not end with this sequence])
 const NO_NEST: &[(&[&str], &[&str])] = &[
@@ -142,17 +131,17 @@ impl Browser {
                 HtmlToken::Comment(text) => {
                     parent.append(&[Node::comment(text.to_owned())]);
                 }
-                HtmlToken::Script(attrs, text) => {
+                HtmlToken::Script(_attrs, text) => {
                     // TODO attrs
                     parent.append(&[Node::element("script".to_owned(), vec![])
                         .append(&[Node::text(text.to_owned())])]);
                 }
-                HtmlToken::Style(attrs, text) => {
+                HtmlToken::Style(_attrs, text) => {
                     // TODO attrs
                     parent.append(&[Node::element("style".to_owned(), vec![])
                         .append(&[Node::text(text.to_owned())])]);
                 }
-                HtmlToken::Tag(true, name, attrs) => {
+                HtmlToken::Tag(true, name, _attrs) => {
                     if let Some((i, _)) = names_stack
                         .iter()
                         .enumerate()
@@ -167,7 +156,7 @@ impl Browser {
                         error!("failed to find match for closing tag: {:?}", name);
                     }
                 }
-                HtmlToken::Tag(false, name, attrs) => {
+                HtmlToken::Tag(false, name, _attrs) => {
                     let element = Node::element(name.to_owned(), vec![]);
 
                     for &(child_names, suffix) in NO_NEST {
@@ -216,126 +205,22 @@ impl Browser {
         dom: Node,
     ) -> eyre::Result<Document> {
         let viewport = self.viewport.clone();
-        let mut font = FontInfo::new(
-            FontFamily::Proportional,
-            FONT_DATA,
-            FONT_SIZE,
-            viewport.scale,
-        )?;
-        let mut font2 = FontInfo::new(
-            FontFamily::Proportional,
-            FONT_DATA,
-            FONT_SIZE * 1.25,
-            viewport.scale,
-        )?;
-        let x_min = viewport.rect.min.x + MARGIN;
-        let x_max = viewport.rect.max.x - MARGIN;
-        let mut cursor = pos2(x_min, viewport.rect.min.y + MARGIN);
-        let mut display_list = Vec::<PaintText>::default();
-
-        // per-line data
-        let mut i = 0;
-        let mut max_ascent = 0.0f32;
-        let mut max_height = 0.0f32;
-
-        let mut parent = dom.clone();
-        let mut children = dom.children().iter().cloned().collect::<Vec<_>>();
-        let mut stack = vec![];
-        let mut j = 0;
-        while j < children.len() {
-            trace!(parent = %*parent.data(), child = %*children[j].data());
-            let descended = match children[j].r#type() {
-                NodeType::Text => {
-                    let value = children[j].value().unwrap();
-                    let mut input = &*value;
-                    while !input.is_empty() {
-                        let (rest, token) = match html_word(input) {
-                            Ok(result) => result,
-                            // Err(nom::Err::Incomplete(_)) => ("", HtmlWord::Other(input)),
-                            Err(e) => bail!("{}; input={:?}", e, input),
-                        };
-                        let text = match token {
-                            HtmlWord::Space(_) => " ",
-                            HtmlWord::Other(x) => x,
-                        };
-                        for word in text.split_word_bounds() {
-                            let advance = word
-                                .chars()
-                                .map(|c| font.ab.h_advance(font.ab.glyph_id(c)))
-                                .sum::<f32>()
-                                / viewport.scale;
-                            let ascent = font.ab.ascent() / viewport.scale;
-                            let height = font.ab.height() / viewport.scale;
-                            if cursor.x + advance > x_max {
-                                for paint in &mut display_list[i..] {
-                                    *paint.0.top_mut() +=
-                                        max_ascent - paint.1.ab.ascent() / viewport.scale;
-                                }
-                                cursor.x = x_min;
-                                cursor.y += max_height;
-                                i = display_list.len();
-                                max_ascent = 0.0;
-                                max_height = 0.0;
-                            }
-                            max_ascent = max_ascent.max(ascent);
-                            max_height = max_height.max(height);
-                            let rect = Rect::from_min_size(cursor, vec2(advance, height));
-                            display_list.push(PaintText(rect, font.clone(), word.to_string()));
-                            cursor.x += advance;
-                            swap(&mut font, &mut font2);
-                            swap(&mut font, &mut font2);
-                        }
-                        input = rest;
-                    }
-
-                    false
-                }
-                NodeType::Document => unreachable!(),
-                NodeType::Comment => false,
-                NodeType::Element => {
-                    let mut pushed = false;
-                    if j + 1 < children.len() {
-                        stack.push((parent.clone(), j + 1));
-                        pushed = true;
-                    }
-                    parent = children[j].clone();
-                    children = parent.children().to_owned();
-                    j = 0;
-                    trace!(new_parent_down = %*parent.data(), pushed);
-
-                    true
-                }
-            };
-            if !descended {
-                j += 1;
-            }
-            if j >= children.len() {
-                if let Some(previous) = stack.pop() {
-                    parent = previous.0;
-                    children = parent.children().to_owned();
-                    j = previous.1;
-                    trace!(new_parent_up = %*parent.data());
-                }
-            }
-        }
-        for paint in &mut display_list[i..] {
-            *paint.0.top_mut() += max_ascent - paint.1.ab.ascent() / viewport.scale;
-        }
-        trace!(display_list_len = display_list.len());
+        let layout = Layout::document(dom.clone());
+        layout.layout(&viewport)?;
 
         Ok(Document::LaidOut {
             location,
             response_body,
             dom,
-            display_list,
+            layout,
             viewport,
         })
     }
 
-    #[instrument(skip(self, ui, display_list))]
-    fn paint(&self, ui: &Ui, display_list: &[PaintText], viewport: &ViewportInfo) {
+    #[instrument(skip(self, ui, layout))]
+    fn paint(&self, ui: &Ui, layout: &Layout, viewport: &ViewportInfo) {
         let painter = ui.painter();
-        for paint in display_list {
+        for paint in &*layout.display_list() {
             let rect = paint.rect().translate(-self.scroll);
             if rect.intersects(viewport.rect) {
                 // painter.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::from_rgb(255, 0, 255)));
@@ -402,7 +287,7 @@ impl eframe::App for Browser {
         egui::TopBottomPanel::top("location").show(ctx, |ui| {
             ui.allocate_ui_with_layout(
                 ui.available_size(),
-                Layout::right_to_left(Align::Center),
+                egui::Layout::right_to_left(Align::Center),
                 |ui| {
                     if ui.button("go").clicked() {
                         self.go();
@@ -425,12 +310,10 @@ impl eframe::App for Browser {
                     self.scroll = self.scroll.clamp(Vec2::ZERO, self.document.scroll_limit());
 
                     if let Document::LaidOut {
-                        display_list,
-                        viewport,
-                        ..
+                        layout, viewport, ..
                     } = &self.document
                     {
-                        self.paint(ui, display_list, viewport);
+                        self.paint(ui, layout, viewport);
 
                         if viewport
                             != self.viewport.update(

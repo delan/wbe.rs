@@ -6,8 +6,6 @@ use std::{
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 use tracing::{instrument, trace};
 
-use crate::*;
-
 pub type NodeRead<'n, T> = RwLockReadGuardRef<'n, OwnedNode, T>;
 pub type NodeWrite<'n, T> = RwLockWriteGuardRefMut<'n, OwnedNode, T>;
 

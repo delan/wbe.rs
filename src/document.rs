@@ -3,6 +3,7 @@ use std::{fmt::Debug, mem::swap, str};
 use egui::Vec2;
 
 use crate::dom::Node;
+use crate::layout::Layout;
 use crate::*;
 
 #[derive(Debug)]
@@ -24,18 +25,21 @@ pub enum Document {
         location: String,
         response_body: String,
         dom: Node,
-        display_list: Vec<paint::PaintText>,
+        layout: Layout,
         viewport: viewport::ViewportInfo,
     },
 }
 
 impl Default for Document {
     fn default() -> Self {
+        let dom = Node::document();
+        let layout = Layout::document(dom.clone());
+
         Self::LaidOut {
             location: "about:blank".to_owned(),
             response_body: "".to_owned(),
-            dom: Node::document(),
-            display_list: vec![],
+            dom,
+            layout,
             viewport: Default::default(),
         }
     }
@@ -77,8 +81,8 @@ impl Document {
 
     pub fn size(&self) -> Vec2 {
         let mut result = Vec2::ZERO;
-        if let Self::LaidOut { display_list, .. } = self {
-            for paint in display_list {
+        if let Self::LaidOut { layout, .. } = self {
+            for paint in &*layout.display_list() {
                 result = result.max(paint.rect().max.to_vec2());
             }
         }

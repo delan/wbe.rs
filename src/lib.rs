@@ -2,6 +2,7 @@ pub mod document;
 pub mod dom;
 pub mod font;
 pub mod http;
+pub mod layout;
 pub mod paint;
 pub mod parse;
 pub mod viewport;
@@ -11,6 +12,7 @@ use std::{
     net::TcpStream,
 };
 
+use backtrace::Backtrace;
 use regex::{bytes::Captures as BinCaptures, bytes::Regex as BinRegex, Captures, Regex};
 use rustls_connector::TlsStream;
 
@@ -32,6 +34,13 @@ macro_rules! dbg_bytes {
     };
 }
 
+// to squelch rust-analyzer error on FONT_PATH in vscode, set
+// WBE_FONT_PATH to /dev/null in rust-analyzer.cargo.extraEnv
+pub const MARGIN: f32 = 16.0;
+pub const FONT_SIZE: f32 = 16.0;
+pub const FONT_NAME: &str = "Times New Roman";
+pub const FONT_DATA: &[u8] = include_bytes!(env!("WBE_FONT_PATH"));
+
 pub struct Split<'i>(Captures<'i>, &'i str);
 pub struct BinSplit<'i>(BinCaptures<'i>, &'i [u8]);
 impl<'i> Split<'i> {
@@ -50,6 +59,41 @@ pub fn dump(bytes: &[u8]) -> String {
         .iter()
         .map(|x| x.escape_ascii().to_string())
         .collect::<String>()
+}
+
+pub fn dump_backtrace(backtrace: Backtrace) {
+    let prefix = &*format!("{}/src/", env!("CARGO_MANIFEST_DIR"));
+    for (i, frame) in backtrace.frames().iter().enumerate() {
+        if frame
+            .symbols()
+            .iter()
+            .all(|s| s.filename().map_or(false, |x| !x.starts_with(prefix)))
+        {
+            break;
+        }
+        for (j, symbol) in frame.symbols().iter().enumerate() {
+            if i == 0 && j == 0 {
+                eprint!(">>> ");
+            } else {
+                eprint!("    ");
+            }
+            match symbol.name() {
+                Some(name) => eprint!("{}", name),
+                None => eprint!("?"),
+            }
+            match symbol.filename() {
+                Some(filename) => {
+                    eprint!(" ({}", filename.strip_prefix(prefix).unwrap().display())
+                }
+                None => eprint!(" (?"),
+            }
+            match symbol.lineno() {
+                Some(lineno) => eprint!(":{})", lineno),
+                None => eprint!(":?)"),
+            }
+            eprintln!();
+        }
+    }
 }
 
 pub fn parse<'i>(input: &'i str, pattern: &str) -> Option<Captures<'i>> {
