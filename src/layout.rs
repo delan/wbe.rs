@@ -219,6 +219,13 @@ impl Layout {
         match node.name() {
             // presentational hints
             x if DISPLAY_NONE.iter().any(|y| y.eq_ignore_ascii_case(&x)) => return Ok(()),
+            x if x.eq_ignore_ascii_case("body") => {
+                // hack for body{margin:1em}
+                self.write().rect.min.x += MARGIN;
+                self.write().rect.max.x -= MARGIN;
+                self.write().rect.min.y += MARGIN;
+                self.write().rect.max.y += MARGIN;
+            }
             x if x.eq_ignore_ascii_case("h1") => {
                 self.write().font_size *= 2.5;
                 self.write().font_weight_bold = true;
@@ -248,10 +255,8 @@ impl Layout {
 
         match self.mode() {
             LayoutMode::Document => {
-                self.write().rect = Rect::from_min_size(
-                    viewport.rect.min + vec2(MARGIN, MARGIN),
-                    vec2(viewport.rect.width() - 2.0 * MARGIN, 0.0),
-                );
+                self.write().rect =
+                    Rect::from_min_size(viewport.rect.min, vec2(viewport.rect.width(), 0.0));
 
                 let layout = self.block(self.node().clone());
                 layout.write().rect = initial_rect(None);
@@ -259,7 +264,13 @@ impl Layout {
                 self.write()
                     .display_list
                     .append(&mut layout.write().display_list);
-                self.write().rect.max.y += layout.read().rect.height();
+
+                // setting max rather than adding layout rect size (for hack)
+                self.write().rect.max = layout.read().rect.max;
+
+                // hack for body{margin:1em}
+                self.write().rect.max.y += MARGIN;
+
                 self.append(layout);
                 debug!(mode = ?self.mode(), height = self.read().rect.height(), display_list_len = self.read().display_list.len());
             }
@@ -280,7 +291,10 @@ impl Layout {
                             self.write()
                                 .display_list
                                 .append(&mut layout.write().display_list);
-                            self.write().rect.max.y += layout.read().rect.height();
+
+                            // setting max rather than adding layout rect size (for hack)
+                            self.write().rect.max = layout.read().rect.max;
+
                             self.append(layout);
                         }
                     }
@@ -305,7 +319,7 @@ impl Layout {
             LayoutMode::Inline => unreachable!(),
         }
 
-        trace!(node = %*self.node().data(), outer = ?self.mode(), inner = ?Self::mode_for(self.node().clone()), height = self.read().rect.height());
+        trace!(mode = ?self.mode(), node = %*self.node().data(), outer = ?self.mode(), inner = ?Self::mode_for(self.node().clone()), height = self.read().rect.height());
 
         Ok(())
     }

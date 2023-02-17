@@ -19,14 +19,10 @@ impl Default for ViewportInfo {
 }
 
 impl ViewportInfo {
-    #[instrument(skip(self, cursor, screen_rect, pixels_per_point))]
-    pub fn update(&mut self, cursor: Rect, screen_rect: Rect, pixels_per_point: f32) -> &mut Self {
-        // e.g. cursor [[0 24] - [800 inf]], screen_rect [[0 0] - [800 600]]
-        let mut viewport_rect = cursor;
-        *viewport_rect.bottom_mut() = screen_rect.bottom();
-
+    #[instrument(skip(self, viewport_rect, pixels_per_point))]
+    pub fn update(&mut self, viewport_rect: Rect, pixels_per_point: f32) -> &mut Self {
         if viewport_rect != self.rect || pixels_per_point != self.scale {
-            debug!(?cursor, ?screen_rect, pixels_per_point);
+            debug!(?viewport_rect, pixels_per_point);
             self.rect = viewport_rect;
             self.scale = pixels_per_point;
         }

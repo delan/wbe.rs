@@ -2,7 +2,8 @@ use std::time::Instant;
 use std::{env::args, str};
 
 use egui::{
-    vec2, Align, Align2, Color32, FontData, FontDefinitions, FontFamily, Frame, TextEdit, Ui, Vec2,
+    vec2, Align, Align2, Color32, FontData, FontDefinitions, FontFamily, Frame, Rect, TextEdit, Ui,
+    Vec2,
 };
 use eyre::bail;
 use tracing::{debug, error, info, instrument, trace};
@@ -303,37 +304,78 @@ impl eframe::App for Browser {
         egui::CentralPanel::default()
             .frame(Frame::none().fill(Color32::WHITE))
             .show(ctx, |ui| {
-                // needed only for scroll_delta
-                egui::ScrollArea::both().show(ui, |ui| {
-                    // FIXME minus to work around weird y direction
-                    self.scroll -= ui.input(|i| i.scroll_delta);
-                    self.scroll = self.scroll.clamp(Vec2::ZERO, self.document.scroll_limit());
+                // e.g. [[0 24] - [800 inf]] → [0 24]
+                let outer_rect = ui.cursor();
+                let outer_position = outer_rect.min;
 
-                    if let Document::LaidOut {
-                        layout, viewport, ..
-                    } = &self.document
-                    {
-                        self.paint(ui, layout, viewport);
+                // the egui ScrollArea provides interactive scrollbars, plus the ability to read
+                // scroll wheel input via ui.input(|i|i.scroll_delta) for relative, or for absolute,
+                // ui.cursor().min minus the outer ui.cursor().min. in fact, i can’t find any way
+                // at all to read scroll wheel input without a ScrollArea!
+                egui::ScrollArea::both()
+                    .always_show_scroll(true)
+                    .auto_shrink([false, false])
+                    .min_scrolled_width(0.0)
+                    .min_scrolled_height(0.0)
+                    .show(ui, |ui| {
+                        let viewport_rect = {
+                            // e.g. [0 -26] when scrolled by [0 50]
+                            let inner_position = ui.cursor().min;
 
-                        if viewport
-                            != self.viewport.update(
-                                ui.cursor(),
-                                ctx.screen_rect(),
-                                ctx.pixels_per_point(),
-                            )
+                            // e.g. [0 50]
+                            self.scroll = outer_position - inner_position;
+
+                            // e.g. [788 564]
+                            let client_size = ui.available_size();
+
+                            // e.g. [[0 24] - [788 800]]
+                            Rect::from_min_size(outer_position, client_size)
+                        };
+
+                        // e.g. [788 564]
+                        let mut scroll_size = viewport_rect.size();
+
+                        if let Document::LaidOut {
+                            layout, viewport, ..
+                        } = &self.document
                         {
-                            if let Document::None = self.next_document {
-                                self.next_document = self.document.take().invalidate_layout();
-                            } else {
-                                self.next_document = self.next_document.take().invalidate_layout();
-                            }
-                            if let Err(e) = self.tick() {
-                                error!("error: {}", e.to_string());
-                                panic!();
+                            // expand scroll_rect where needed to fit page contents
+                            scroll_size.x = scroll_size.x.max(layout.read().rect.width());
+                            scroll_size.y = scroll_size.y.max(layout.read().rect.height());
+
+                            // paint the layout tree translated by -self.scroll (since we do the
+                            // translate ourselves and not ScrollArea, it’s not cheating)
+                            self.paint(ui, layout, viewport);
+
+                            if viewport
+                                != self.viewport.update(viewport_rect, ctx.pixels_per_point())
+                            {
+                                if let Document::None = self.next_document {
+                                    self.next_document = self.document.take().invalidate_layout();
+                                } else {
+                                    self.next_document =
+                                        self.next_document.take().invalidate_layout();
+                                }
+                                if let Err(e) = self.tick() {
+                                    error!("error: {}", e.to_string());
+                                    panic!();
+                                }
                             }
                         }
-                    }
-                });
+
+                        let layout_rect = match &self.document {
+                            Document::LaidOut { layout, .. } => layout.read().rect,
+                            _ => Rect::NAN,
+                        };
+                        trace!(
+                            ?outer_rect, inner_rect = ?ui.cursor(),
+                            ?layout_rect, ?viewport_rect,
+                            ?scroll_size, scroll = ?self.scroll,
+                        );
+
+                        // set range of scrollbars
+                        ui.set_min_size(scroll_size);
+                    });
             });
     }
 }
