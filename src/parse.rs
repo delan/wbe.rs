@@ -53,7 +53,7 @@ pub fn html_tag(input: &str) -> IResult<&str, (bool, &str, Vec<(&str, &str)>)> {
     let (rest, (slash, name, attrs, _)) = delimited(
         char('<'),
         tuple((opt(tag("/")), html_ident, many0(html_attr), opt(html_space))),
-        char('>'),
+        tuple((opt(tag("/")), char('>'))),
     )(input)?;
 
     Ok((rest, (slash.is_some(), name, attrs)))
