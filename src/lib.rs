@@ -34,12 +34,16 @@ macro_rules! dbg_bytes {
     };
 }
 
-// to squelch rust-analyzer error on FONT_PATH in vscode, set
-// WBE_FONT_PATH to /dev/null in rust-analyzer.cargo.extraEnv
+// to squelch rust-analyzer error on FONT_DATA and friends in vscode,
+// set WBE_FONT_PATH to /dev/null in rust-analyzer.cargo.extraEnv
 pub const MARGIN: f32 = 16.0;
 pub const FONT_SIZE: f32 = 16.0;
-pub const FONT_NAME: &str = "Times New Roman";
-pub const FONT_DATA: &[u8] = include_bytes!(env!("WBE_FONT_PATH"));
+pub const FONTS: &[(&str, &[u8])] = &[
+    ("times", include_bytes!(env!("WBE_FONT_PATH"))),
+    ("timesbd", include_bytes!(env!("WBE_FONT_PATH_B"))),
+    ("timesi", include_bytes!(env!("WBE_FONT_PATH_I"))),
+    ("timesbi", include_bytes!(env!("WBE_FONT_PATH_BI"))),
+];
 
 pub struct Split<'i>(Captures<'i>, &'i str);
 pub struct BinSplit<'i>(BinCaptures<'i>, &'i [u8]);

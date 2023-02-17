@@ -51,14 +51,14 @@ fn main() -> eyre::Result<()> {
         options,
         Box::new(|cc| {
             let mut font_definitions = FontDefinitions::default();
-            font_definitions
-                .font_data
-                .insert(FONT_NAME.to_owned(), FontData::from_static(FONT_DATA));
-            font_definitions
-                .families
-                .get_mut(&FontFamily::Proportional)
-                .unwrap()
-                .insert(0, FONT_NAME.to_owned());
+            for &(name, data) in FONTS {
+                font_definitions
+                    .font_data
+                    .insert(name.to_owned(), FontData::from_static(data));
+                font_definitions
+                    .families
+                    .insert(FontFamily::Name(name.into()), vec![name.to_owned()]);
+            }
             cc.egui_ctx.set_fonts(font_definitions);
             let mut browser = Browser {
                 location,

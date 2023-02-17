@@ -6,6 +6,9 @@ pkgs.mkShell {
 
     # Times New Roman
     export WBE_FONT_PATH=${pkgs.corefonts.outPath}/share/fonts/truetype/times.ttf
+    export WBE_FONT_PATH_B=${pkgs.corefonts.outPath}/share/fonts/truetype/timesbd.ttf
+    export WBE_FONT_PATH_I=${pkgs.corefonts.outPath}/share/fonts/truetype/timesi.ttf
+    export WBE_FONT_PATH_BI=${pkgs.corefonts.outPath}/share/fonts/truetype/timesbi.ttf
 
     export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [
       pkgs.xorg.libX11

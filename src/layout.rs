@@ -20,7 +20,8 @@ use crate::{
     *,
 };
 
-const BLOCK: &[&str] = &[
+const DISPLAY_NONE: &[&str] = &["#comment", "head", "title", "script", "style"];
+const DISPLAY_BLOCK: &[&str] = &[
     "html",
     "body",
     "article",
@@ -72,6 +73,10 @@ pub struct OwnedLayout {
     pub mode: LayoutMode,
     pub display_list: Vec<PaintText>,
     pub rect: Rect,
+
+    font_size: f32,
+    font_weight_bold: bool,
+    font_style_italic: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -113,6 +118,9 @@ impl Layout {
             mode,
             display_list: vec![],
             rect: Rect::NAN,
+            font_size: FONT_SIZE,
+            font_weight_bold: false,
+            font_style_italic: false,
         })))
     }
 
@@ -121,7 +129,7 @@ impl Layout {
             NodeType::Document => Some(LayoutMode::Block),
             NodeType::Element => {
                 for child in &*node.children() {
-                    for name in BLOCK {
+                    for name in DISPLAY_BLOCK {
                         if name.eq_ignore_ascii_case(&child.name()) {
                             return Some(LayoutMode::Block);
                         }
@@ -145,12 +153,13 @@ impl Layout {
         Self::with_mode(node, LayoutMode::Document)
     }
 
-    pub fn block(node: Node) -> Self {
-        Self::with_mode(node, LayoutMode::Block)
-    }
+    pub fn block(&self, node: Node) -> Self {
+        let result = Self::with_mode(node, LayoutMode::Block);
+        result.write().font_size = self.read().font_size;
+        result.write().font_weight_bold = self.read().font_weight_bold;
+        result.write().font_style_italic = self.read().font_style_italic;
 
-    pub fn inline(node: Node) -> Self {
-        Self::with_mode(node, LayoutMode::Inline)
+        result
     }
 
     pub fn append(&self, child: Layout) -> Self {
@@ -205,6 +214,38 @@ impl Layout {
             result
         };
 
+        // separate let releases RwLock read!
+        let node = self.node().clone();
+        match node.name() {
+            // presentational hints
+            x if DISPLAY_NONE.iter().any(|y| y.eq_ignore_ascii_case(&x)) => return Ok(()),
+            x if x.eq_ignore_ascii_case("h1") => {
+                self.write().font_size *= 2.5;
+                self.write().font_weight_bold = true;
+            }
+            x if x.eq_ignore_ascii_case("h2") => {
+                self.write().font_size *= 2.0;
+                self.write().font_weight_bold = true;
+            }
+            x if x.eq_ignore_ascii_case("h3") => {
+                self.write().font_size *= 1.5;
+                self.write().font_weight_bold = true;
+            }
+            x if x.eq_ignore_ascii_case("h4") => {
+                self.write().font_size *= 1.25;
+                self.write().font_weight_bold = true;
+            }
+            x if x.eq_ignore_ascii_case("h5") => {
+                self.write().font_size *= 1.0;
+                self.write().font_weight_bold = true;
+            }
+            x if x.eq_ignore_ascii_case("h6") => {
+                self.write().font_size *= 0.75;
+                self.write().font_weight_bold = true;
+            }
+            _ => {}
+        }
+
         match self.mode() {
             LayoutMode::Document => {
                 self.write().rect = Rect::from_min_size(
@@ -212,7 +253,7 @@ impl Layout {
                     vec2(viewport.rect.width() - 2.0 * MARGIN, 0.0),
                 );
 
-                let layout = Self::block(self.node().clone());
+                let layout = self.block(self.node().clone());
                 layout.write().rect = initial_rect(None);
                 layout.layout(viewport)?;
                 self.write()
@@ -230,7 +271,7 @@ impl Layout {
                         // temporary layout list releases RwLock read!
                         let mut layouts: Vec<Layout> = vec![];
                         for child in &*self.node().children() {
-                            let layout = Self::block(child.clone());
+                            let layout = self.block(child.clone());
                             layout.write().rect = initial_rect(layouts.last());
                             layout.layout(viewport)?;
                             layouts.push(layout);
@@ -271,14 +312,19 @@ impl Layout {
 
     pub fn recurse(&self, node: Node, context: &mut LayoutContext) -> eyre::Result<()> {
         // trace!(mode = ?LayoutMode::Inline, node = %*node.data());
-        if node.r#type() == NodeType::Text {
-            self.text(node.clone(), context)?;
-        } else {
-            self.open_tag(&node.name());
-            for child in &*node.children() {
-                self.recurse(child.clone(), context)?;
+        match node.r#type() {
+            NodeType::Document => unreachable!(),
+            NodeType::Element => {
+                self.open_tag(&node.name(), context);
+                for child in &*node.children() {
+                    self.recurse(child.clone(), context)?;
+                }
+                self.close_tag(&node.name(), context);
             }
-            self.close_tag(&node.name());
+            NodeType::Text => {
+                self.text(node.clone(), context)?;
+            }
+            NodeType::Comment => return Ok(()),
         }
 
         Ok(())
@@ -287,9 +333,21 @@ impl Layout {
     pub fn text(&self, node: Node, context: &mut LayoutContext) -> eyre::Result<()> {
         assert_eq!(node.r#type(), NodeType::Text);
         let font = FontInfo::new(
-            FontFamily::Proportional,
-            FONT_DATA,
-            FONT_SIZE,
+            FontFamily::Name(
+                match (self.read().font_weight_bold, self.read().font_style_italic) {
+                    (false, false) => FONTS[0].0.into(),
+                    (true, false) => FONTS[1].0.into(),
+                    (false, true) => FONTS[2].0.into(),
+                    (true, true) => FONTS[3].0.into(),
+                },
+            ),
+            match (self.read().font_weight_bold, self.read().font_style_italic) {
+                (false, false) => FONTS[0].1,
+                (true, false) => FONTS[1].1,
+                (false, true) => FONTS[2].1,
+                (true, true) => FONTS[3].1,
+            },
+            self.read().font_size,
             context.viewport.scale,
         )?;
         let rect = self.read().rect;
@@ -346,7 +404,23 @@ impl Layout {
         Ok(())
     }
 
-    pub fn open_tag(&self, _name: &str) {}
+    pub fn open_tag(&self, name: &str, _context: &mut LayoutContext) {
+        match name {
+            x if x.eq_ignore_ascii_case("b") => self.write().font_weight_bold = true,
+            x if x.eq_ignore_ascii_case("i") => self.write().font_style_italic = true,
+            x if x.eq_ignore_ascii_case("big") => self.write().font_size *= 1.5,
+            x if x.eq_ignore_ascii_case("small") => self.write().font_size /= 1.5,
+            _ => {}
+        }
+    }
 
-    pub fn close_tag(&self, _name: &str) {}
+    pub fn close_tag(&self, name: &str, _context: &mut LayoutContext) {
+        match name {
+            x if x.eq_ignore_ascii_case("b") => self.write().font_weight_bold = false,
+            x if x.eq_ignore_ascii_case("i") => self.write().font_style_italic = false,
+            x if x.eq_ignore_ascii_case("big") => self.write().font_size /= 1.5,
+            x if x.eq_ignore_ascii_case("small") => self.write().font_size *= 1.5,
+            _ => {}
+        }
+    }
 }
