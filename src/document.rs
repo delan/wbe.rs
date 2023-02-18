@@ -1,3 +1,4 @@
+use std::mem::{size_of, size_of_val};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use std::{fmt::Debug, mem::swap, str};
@@ -7,8 +8,8 @@ use eyre::bail;
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 use tracing::{debug, error, info, instrument, trace};
 
-use crate::dom::{Node, NodeData};
-use crate::layout::Layout;
+use crate::dom::{Node, NodeData, OwnedNode};
+use crate::layout::{Layout, OwnedLayout};
 use crate::parse::{html_token, HtmlToken};
 use crate::viewport::ViewportInfo;
 use crate::*;
@@ -279,7 +280,7 @@ impl OwnedDocument {
         }
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, viewport))]
     pub fn tick(self, viewport: ViewportInfo) -> eyre::Result<OwnedDocument> {
         let start = Instant::now();
         let result = match self {
@@ -298,8 +299,100 @@ impl OwnedDocument {
         };
 
         let now = Instant::now();
-        info!(status = result.status(), duration = ?now.duration_since(start));
+        info!(status = result.status(), duration = ?now.duration_since(start), memory_usage = result.memory_usage());
 
         Ok(result)
+    }
+
+    #[instrument(skip(self))]
+    pub fn memory_usage(&self) -> usize {
+        fn size_of_string(x: &String) -> usize {
+            // x (vec (ptr + len + capacity)) + data
+            size_of_val(x) + x.capacity()
+        }
+        fn size_of_vec<T>(x: &Vec<T>) -> usize {
+            // x (ptr + len + capacity) + data
+            size_of_val(x) + x.capacity() * size_of::<T>()
+        }
+        fn size_of_dom_tree(x: &Node) -> usize {
+            // x (arc (ptr)) + strong + weak + owned
+            size_of_val(x) + 2 * size_of::<usize>() + size_of_owned_node(&x.read())
+        }
+        fn size_of_owned_node(x: &OwnedNode) -> usize {
+            // x (parent (weak (ptr)) + children direct + inner direct) - inner direct + inner total + children indirect
+            size_of_val(x) - size_of_val(&x.inner)
+                + size_of_node_data(&x.inner)
+                + x.children
+                    .iter()
+                    .map(|x| size_of_dom_tree(x))
+                    .sum::<usize>()
+        }
+        fn size_of_node_data(x: &NodeData) -> usize {
+            // x (enum (discriminant + string direct + vec direct)) - direct + fields
+            size_of_val(x)
+                - match x {
+                    NodeData::Document => 0,
+                    NodeData::Element(n, a) => size_of_val(n) + size_of_val(a),
+                    NodeData::Text(t) => size_of_val(t),
+                    NodeData::Comment(t) => size_of_val(t),
+                }
+                + match x {
+                    NodeData::Document => 0,
+                    NodeData::Element(n, a) => size_of_string(n) + size_of_vec(a),
+                    NodeData::Text(t) => size_of_string(t),
+                    NodeData::Comment(t) => size_of_string(t),
+                }
+        }
+        fn size_of_layout_tree(x: &Layout) -> usize {
+            // x (arc (ptr)) + strong + weak + owned
+            size_of_val(x) + 2 * size_of::<usize>() + size_of_owned_layout(&x.read())
+        }
+        fn size_of_owned_layout(x: &OwnedLayout) -> usize {
+            // x (rest + children direct + display_list direct) - display_list indirect + display_list total + children indirect
+            size_of_val(x) - size_of_val(&x.display_list)
+                + size_of_vec(&x.display_list)
+                + x.children
+                    .iter()
+                    .map(|x| size_of_layout_tree(x))
+                    .sum::<usize>()
+        }
+
+        match self {
+            Self::None => size_of_val(self),
+            Self::Navigated { location } => size_of_val(&Self::None) + size_of_string(location),
+            Self::Loaded {
+                location,
+                response_body,
+            } => {
+                size_of_val(&Self::None) + size_of_string(location) + size_of_string(response_body)
+            }
+            Self::Parsed {
+                location,
+                response_body,
+                dom,
+            } => {
+                size_of_val(&Self::None)
+                    + size_of_string(location)
+                    + size_of_string(response_body)
+                    + size_of_dom_tree(dom)
+            }
+            Self::LaidOut {
+                location,
+                response_body,
+                dom,
+                layout,
+                viewport: _,
+            } => {
+                debug!(
+                    dom_tree_size = size_of_dom_tree(dom),
+                    layout_tree_size = size_of_layout_tree(layout)
+                );
+                size_of_val(&Self::None)
+                    + size_of_string(location)
+                    + size_of_string(response_body)
+                    + size_of_dom_tree(dom)
+                    + size_of_layout_tree(layout)
+            }
+        }
     }
 }
