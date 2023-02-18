@@ -3,6 +3,9 @@ name = "wbe"
 version = "0.1.0"
 edition = "2021"
 
+[profile.release]
+debug = true
+
 [dependencies]
 ab_glyph = "0.2.20"
 backtrace = "0.3.67"
