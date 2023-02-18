@@ -166,14 +166,20 @@ impl OwnedDocument {
                 HtmlToken::Comment(text) => {
                     parent.append(&[Node::comment(text.to_owned())]);
                 }
-                HtmlToken::Script(_attrs, text) => {
-                    // TODO attrs
-                    parent.append(&[Node::element("script".to_owned(), vec![])
+                HtmlToken::Script(attrs, text) => {
+                    let attrs = attrs
+                        .iter()
+                        .map(|&(n, v)| (n.to_owned(), v.to_owned()))
+                        .collect();
+                    parent.append(&[Node::element("script".to_owned(), attrs)
                         .append(&[Node::text(text.to_owned())])]);
                 }
-                HtmlToken::Style(_attrs, text) => {
-                    // TODO attrs
-                    parent.append(&[Node::element("style".to_owned(), vec![])
+                HtmlToken::Style(attrs, text) => {
+                    let attrs = attrs
+                        .iter()
+                        .map(|&(n, v)| (n.to_owned(), v.to_owned()))
+                        .collect();
+                    parent.append(&[Node::element("style".to_owned(), attrs)
                         .append(&[Node::text(text.to_owned())])]);
                 }
                 HtmlToken::Tag(true, name, _attrs) => {
@@ -191,8 +197,12 @@ impl OwnedDocument {
                         error!("failed to find match for closing tag: {:?}", name);
                     }
                 }
-                HtmlToken::Tag(false, name, _attrs) => {
-                    let element = Node::element(name.to_owned(), vec![]);
+                HtmlToken::Tag(false, name, attrs) => {
+                    let attrs = attrs
+                        .iter()
+                        .map(|&(n, v)| (n.to_owned(), v.to_owned()))
+                        .collect();
+                    let element = Node::element(name.to_owned(), attrs);
 
                     for &(child_names, suffix) in NO_NEST {
                         if child_names.contains(&&*name) {
