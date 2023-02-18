@@ -41,42 +41,18 @@ pub fn parse_html(response_body: &str) -> eyre::Result<Node> {
                 parent.append(&[Node::comment(text.to_owned())]);
             }
             HtmlToken::Script(attrs, text) => {
-                let attrs = attrs
-                    .iter()
-                    .map(|&(n, v)| (n.to_owned(), v.to_owned()))
-                    .collect();
+                let attrs = attrs.into_iter().map(|(n, v)| (n.to_owned(), v)).collect();
                 parent.append(&[Node::element("script".to_owned(), attrs)
                     .append(&[Node::text(text.to_owned())])]);
             }
             HtmlToken::Style(attrs, text) => {
-                let attrs = attrs
-                    .iter()
-                    .map(|&(n, v)| (n.to_owned(), v.to_owned()))
-                    .collect();
+                let attrs = attrs.into_iter().map(|(n, v)| (n.to_owned(), v)).collect();
                 parent
                     .append(&[Node::element("style".to_owned(), attrs)
                         .append(&[Node::text(text.to_owned())])]);
             }
-            HtmlToken::Tag(true, name, _attrs) => {
-                if let Some((i, _)) = names_stack
-                    .iter()
-                    .enumerate()
-                    .rfind(|(_, x)| x.eq_ignore_ascii_case(name))
-                {
-                    for _ in 0..(names_stack.len() - i) {
-                        let _ = stack.pop().unwrap();
-                        let _ = names_stack.pop().unwrap();
-                        parent = parent.parent().unwrap();
-                    }
-                } else {
-                    error!("failed to find match for closing tag: {:?}", name);
-                }
-            }
             HtmlToken::Tag(false, name, attrs) => {
-                let attrs = attrs
-                    .iter()
-                    .map(|&(n, v)| (n.to_owned(), v.to_owned()))
-                    .collect();
+                let attrs = attrs.into_iter().map(|(n, v)| (n.to_owned(), v)).collect();
                 let element = Node::element(name.to_owned(), attrs);
 
                 for &(child_names, suffix) in NO_NEST {
@@ -98,6 +74,21 @@ pub fn parse_html(response_body: &str) -> eyre::Result<Node> {
                     stack.push(element.clone());
                     names_stack.push(name);
                     parent = element;
+                }
+            }
+            HtmlToken::Tag(true, name, _attrs) => {
+                if let Some((i, _)) = names_stack
+                    .iter()
+                    .enumerate()
+                    .rfind(|(_, x)| x.eq_ignore_ascii_case(name))
+                {
+                    for _ in 0..(names_stack.len() - i) {
+                        let _ = stack.pop().unwrap();
+                        let _ = names_stack.pop().unwrap();
+                        parent = parent.parent().unwrap();
+                    }
+                } else {
+                    error!("failed to find match for closing tag: {:?}", name);
                 }
             }
             HtmlToken::Text(text) => {

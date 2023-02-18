@@ -2,11 +2,13 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_while, take_while1},
     character::complete::char,
-    combinator::opt,
+    combinator::{fail, map, map_parser, opt},
     multi::many0,
     sequence::{delimited, preceded, tuple},
     IResult, Needed,
 };
+
+include!(concat!(env!("OUT_DIR"), "/entities.rs"));
 
 pub fn is_html_space(c: char) -> bool {
     c.is_ascii_whitespace()
@@ -24,19 +26,42 @@ pub fn html_space(input: &str) -> IResult<&str, &str> {
     take_while1(|c: char| c.is_ascii_whitespace())(input)
 }
 
-pub fn html_attr_value(input: &str) -> IResult<&str, &str> {
+fn quoted_attr_value(mut input: &str) -> IResult<&str, String> {
+    let mut result = String::new();
+
+    while !input.is_empty() {
+        let (rest, text) = html_text(true)(input).expect("parser is infallible");
+        result += text;
+        input = rest;
+    }
+
+    Ok((input, result))
+}
+
+pub fn html_attr_value(input: &str) -> IResult<&str, String> {
     alt((
-        delimited(char('"'), take_while(|c| c != '"'), char('"')),
-        delimited(char('\''), take_while(|c| c != '\''), char('\'')),
-        take_while(|c| match c {
-            c if is_html_space(c) => false,
-            '"' | '\'' | '>' => false,
-            _ => true,
-        }),
+        delimited(
+            char('"'),
+            map_parser(take_while(|c| c != '"'), quoted_attr_value),
+            char('"'),
+        ),
+        delimited(
+            char('\''),
+            map_parser(take_while(|c| c != '\''), quoted_attr_value),
+            char('\''),
+        ),
+        map(
+            take_while(|c| match c {
+                c if is_html_space(c) => false,
+                '"' | '\'' | '=' | '<' | '>' | '`' => false,
+                _ => true,
+            }),
+            |x: &str| x.to_owned(),
+        ),
     ))(input)
 }
 
-pub fn html_attr(input: &str) -> IResult<&str, (&str, &str)> {
+pub fn html_attr(input: &str) -> IResult<&str, (&str, String)> {
     let (rest, (_, name, value)) = tuple((
         html_space,
         html_ident,
@@ -46,10 +71,10 @@ pub fn html_attr(input: &str) -> IResult<&str, (&str, &str)> {
         )),
     ))(input)?;
 
-    Ok((rest, (name, value.unwrap_or(""))))
+    Ok((rest, (name, value.unwrap_or("".to_owned()))))
 }
 
-pub fn html_tag(input: &str) -> IResult<&str, (bool, &str, Vec<(&str, &str)>)> {
+pub fn html_tag(input: &str) -> IResult<&str, (bool, &str, Vec<(&str, String)>)> {
     let (rest, (slash, name, attrs, _)) = delimited(
         char('<'),
         tuple((opt(tag("/")), html_ident, many0(html_attr), opt(html_space))),
@@ -68,7 +93,7 @@ pub fn shortest_until_tag_no_case(tag: &str) -> impl FnMut(&str) -> IResult<&str
     }
 }
 
-pub fn html_script(input: &str) -> IResult<&str, (Vec<(&str, &str)>, &str)> {
+pub fn html_script(input: &str) -> IResult<&str, (Vec<(&str, String)>, &str)> {
     let (rest, (attrs, _, _, text)) = preceded(
         tag_no_case("<script"),
         tuple((
@@ -82,7 +107,7 @@ pub fn html_script(input: &str) -> IResult<&str, (Vec<(&str, &str)>, &str)> {
     Ok((rest, (attrs, text)))
 }
 
-pub fn html_style(input: &str) -> IResult<&str, (Vec<(&str, &str)>, &str)> {
+pub fn html_style(input: &str) -> IResult<&str, (Vec<(&str, String)>, &str)> {
     let (rest, (attrs, _, _, text)) = preceded(
         tag_no_case("<style"),
         tuple((
@@ -100,16 +125,42 @@ pub fn html_comment(input: &str) -> IResult<&str, &str> {
     preceded(tag("<!--"), shortest_until_tag_no_case("-->"))(input)
 }
 
-pub fn html_text(input: &str) -> IResult<&str, &str> {
-    alt((tag("<"), take_while1(|c| c != '<')))(input)
+pub fn html_entity(in_attr: bool) -> impl FnMut(&str) -> IResult<&str, &str> {
+    move |input: &str| {
+        for i in ENTITIES_WITH_SEMICOLON_REGEX.matches(input) {
+            let (name, value) = ENTITIES_WITH_SEMICOLON[i];
+            return Ok((input.strip_prefix(name).unwrap(), value));
+        }
+        for i in ENTITIES_WITHOUT_SEMICOLON_REGEX.matches(input) {
+            let (name, value) = ENTITIES_WITHOUT_SEMICOLON[i];
+            let rest = input.strip_prefix(name).unwrap();
+            if in_attr && rest.starts_with(|c: char| c == '=' || c.is_ascii_alphanumeric()) {
+                return Ok((rest, name));
+            } else {
+                return Ok((rest, value));
+            }
+        }
+
+        fail(input)
+    }
+}
+
+pub fn html_text(in_attr: bool) -> impl FnMut(&str) -> IResult<&str, &str> {
+    move |input: &str| {
+        alt((
+            take_while1(|c| c != '<' && c != '&'),
+            html_entity(in_attr),
+            tag("<"),
+        ))(input)
+    }
 }
 
 #[derive(Debug)]
 pub enum HtmlToken<'i> {
     Comment(&'i str),
-    Script(Vec<(&'i str, &'i str)>, &'i str),
-    Style(Vec<(&'i str, &'i str)>, &'i str),
-    Tag(bool, &'i str, Vec<(&'i str, &'i str)>),
+    Script(Vec<(&'i str, String)>, &'i str),
+    Style(Vec<(&'i str, String)>, &'i str),
+    Tag(bool, &'i str, Vec<(&'i str, String)>),
     Text(&'i str),
 }
 
@@ -127,7 +178,7 @@ pub fn html_token(input: &str) -> IResult<&str, HtmlToken> {
         return Ok((rest, HtmlToken::Tag(closing, name, attrs)));
     }
 
-    let (rest, text) = html_text(input)?;
+    let (rest, text) = html_text(false)(input)?;
 
     Ok((rest, HtmlToken::Text(text)))
 }

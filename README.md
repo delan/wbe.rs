@@ -33,7 +33,7 @@ this project loosely implements the [Web Browser Engineering](https://browser.en
 * html parser
     * [x] correct handling of [end-tag-with-attributes error](https://html.spec.whatwg.org/#parse-error-end-tag-with-attributes)
     * [x] correct handling of [end-tag-with-trailing-solidus error](https://html.spec.whatwg.org/#parse-error-end-tag-with-trailing-solidus)
-    * [x] text inside \<style> is RAWTEXT (technically should be RCDATA once we have \&entities;)
+    * [x] text inside \<style> is RAWTEXT
     * [x] text inside \<script> is RAWTEXT (technically should be its own unique thing for \<!--)
     * [x] implicit \</p> when opening any tag in (p, table, form, h1, h2, h3, h4, h5, h6)
     * [x] implicit \</li> when opening \<li>
@@ -54,7 +54,7 @@ this project loosely implements the [Web Browser Engineering](https://browser.en
     * [ ] exercise: file url scheme
     * [ ] exercise: data url scheme
     * [ ] ~~exercise: body tag filter~~
-    * [ ] exercise: entities
+    * [x] exercise: entities
     * [ ] exercise: view-source
     * [ ] exercise: compression
     * [ ] exercise: redirects
