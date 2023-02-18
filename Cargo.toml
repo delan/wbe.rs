@@ -1,5 +1,5 @@
 [workspace]
-members = ["browser", "core", "dom", "html-lexer", "html-parser", "http", "layout"]
+members = ["browser", "core", "css-parser", "dom", "html-lexer", "html-parser", "http", "layout"]
 
 [package]
 name = "wbe"
@@ -23,6 +23,7 @@ tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
 wbe-browser = { path = "browser" }
 wbe-core = { path = "core" }
+wbe-css-parser = { path = "css-parser" }
 wbe-dom = { path = "dom" }
 wbe-html-lexer = { path = "html-lexer" }
 wbe-html-parser = { path = "html-parser" }

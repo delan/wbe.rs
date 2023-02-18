@@ -2678,6 +2678,7 @@ dependencies = [
  "tracing-subscriber",
  "wbe-browser",
  "wbe-core",
+ "wbe-css-parser",
  "wbe-dom",
  "wbe-html-lexer",
  "wbe-html-parser",
@@ -2711,6 +2712,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "wbe-css-parser"
+version = "0.1.0"
+dependencies = [
+ "nom",
+]
+
+[[package]]
 name = "wbe-dom"
 version = "0.1.0"
 dependencies = [
@@ -2735,6 +2743,7 @@ version = "0.1.0"
 dependencies = [
  "eyre",
  "tracing",
+ "wbe-css-parser",
  "wbe-dom",
  "wbe-html-lexer",
 ]

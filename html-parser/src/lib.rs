@@ -1,6 +1,6 @@
 use eyre::bail;
 
-use tracing::{error, trace};
+use tracing::{debug, error, trace};
 use wbe_dom::{Node, NodeData};
 use wbe_html_lexer::{html_token, HtmlToken};
 
@@ -50,6 +50,7 @@ pub fn parse_html(response_body: &str) -> eyre::Result<Node> {
                 parent
                     .append(&[Node::element("style".to_owned(), attrs)
                         .append(&[Node::text(text.to_owned())])]);
+                debug!(css_file = ?wbe_css_parser::css_file(text));
             }
             HtmlToken::Tag(false, name, attrs) => {
                 let attrs = attrs.into_iter().map(|(n, v)| (n.to_owned(), v)).collect();
