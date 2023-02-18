@@ -1,0 +1,10 @@
+[package]
+name = "wbe-http"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eyre = "0.6.8"
+rustls-connector = "0.16.1"
+tracing = "0.1.37"
+wbe-core = { path = "../core" }

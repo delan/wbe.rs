@@ -1,19 +1,15 @@
+use std::env::args;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, RwLock};
 use std::thread;
-use std::{env::args, str};
 
-use backtrace::Backtrace;
 use egui::{
     vec2, Align, Color32, Context, FontData, FontDefinitions, FontFamily, Frame, Rect, TextEdit,
-    Vec2,
 };
-use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 use tracing::{error, instrument, trace, warn};
 
-use wbe::document::{Document, OwnedDocument};
-use wbe::viewport::ViewportInfo;
-use wbe::*;
+use wbe_browser::{Browser, Document, OwnedBrowser, OwnedDocument, RenderStatus};
+use wbe_core::FONTS;
+use wbe_layout::ViewportInfo;
 
 fn main() -> eyre::Result<()> {
     // log to stdout (level configurable by RUST_LOG=debug)
@@ -155,76 +151,6 @@ impl App {
                 egui_ctx,
             })
             .unwrap();
-    }
-}
-
-#[derive(Clone)]
-pub struct Browser(Arc<RwLock<OwnedBrowser>>);
-
-pub type BrowserRead<'n, T> = RwLockReadGuardRef<'n, OwnedBrowser, T>;
-pub type BrowserWrite<'n, T> = RwLockWriteGuardRefMut<'n, OwnedBrowser, T>;
-
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum RenderStatus {
-    Load,
-    Parse,
-    Layout,
-    Done,
-}
-
-impl Browser {
-    pub fn wrap(inner: OwnedBrowser) -> Self {
-        Self(Arc::new(RwLock::new(inner)))
-    }
-
-    pub fn read(&self) -> BrowserRead<OwnedBrowser> {
-        if option_env!("WBE_DEBUG_RWLOCK").is_some() {
-            dump_backtrace(Backtrace::new());
-        }
-        BrowserRead::new(self.0.read().unwrap())
-    }
-
-    pub fn write(&self) -> BrowserWrite<OwnedBrowser> {
-        if option_env!("WBE_DEBUG_RWLOCK").is_some() {
-            dump_backtrace(Backtrace::new());
-        }
-        BrowserWrite::new(self.0.write().unwrap())
-    }
-
-    pub fn location(&self) -> BrowserRead<str> {
-        self.read().map(|x| &*x.location)
-    }
-
-    pub fn location_mut(&self) -> BrowserWrite<String> {
-        self.write().map_mut(|x| &mut x.location)
-    }
-
-    pub fn set_status(&self, status: RenderStatus) {
-        self.write().status = status;
-    }
-}
-
-pub struct OwnedBrowser {
-    location: String,
-    document: Document,
-    next_document: Document,
-    viewport: ViewportInfo,
-    scroll: Vec2,
-    status: RenderStatus,
-    first_update: bool,
-}
-
-impl Default for OwnedBrowser {
-    fn default() -> Self {
-        Self {
-            location: Default::default(),
-            document: Default::default(),
-            next_document: Default::default(),
-            viewport: Default::default(),
-            scroll: Vec2::ZERO,
-            status: RenderStatus::Done,
-            first_update: true,
-        }
     }
 }
 

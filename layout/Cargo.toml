@@ -1,0 +1,16 @@
+[package]
+name = "wbe-layout"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ab_glyph = "0.2.20"
+backtrace = "0.3.67"
+egui = "0.21.0"
+eyre = "0.6.8"
+owning_ref = "0.4.1"
+tracing = "0.1.37"
+unicode-segmentation = "1.10.1"
+wbe-core = { path = "../core" }
+wbe-dom = { path = "../dom" }
+wbe-html-lexer = { path = "../html-lexer" }

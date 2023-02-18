@@ -1,0 +1,9 @@
+[package]
+name = "wbe-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+backtrace = "0.3.67"
+regex = "1.7.1"
+rustls-connector = "0.16.1"

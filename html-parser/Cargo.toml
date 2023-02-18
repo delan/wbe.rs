@@ -1,0 +1,10 @@
+[package]
+name = "wbe-html-parser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eyre = "0.6.8"
+tracing = "0.1.37"
+wbe-dom = { path = "../dom" }
+wbe-html-lexer = { path = "../html-lexer" }

@@ -10,7 +10,7 @@ use std::{
 use rustls_connector::RustlsConnector;
 use tracing::{debug, instrument, trace};
 
-use crate::*;
+use wbe_core::{dump, lparse_chomp, lparse_split, rparse_split, trim_ascii, ReadWriteStream};
 
 #[instrument]
 pub fn request(url: &str) -> eyre::Result<(BTreeMap<String, String>, Vec<u8>)> {

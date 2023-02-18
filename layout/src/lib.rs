@@ -1,3 +1,9 @@
+pub mod font;
+pub mod paint;
+pub mod viewport;
+
+pub use crate::{font::FontInfo, paint::PaintText, viewport::ViewportInfo};
+
 use std::{
     fmt::Debug,
     sync::{Arc, RwLock, Weak},
@@ -11,14 +17,9 @@ use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 use tracing::{debug, trace};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{
-    dom::{Node, NodeData, NodeType},
-    font::FontInfo,
-    paint::PaintText,
-    parse::{html_word, HtmlWord},
-    viewport::ViewportInfo,
-    *,
-};
+use wbe_core::{dump_backtrace, FONTS, FONT_SIZE, MARGIN};
+use wbe_dom::{Node, NodeData, NodeType};
+use wbe_html_lexer::{html_word, HtmlWord};
 
 const DISPLAY_NONE: &[&str] = &["#comment", "head", "title", "script", "style"];
 const DISPLAY_BLOCK: &[&str] = &[

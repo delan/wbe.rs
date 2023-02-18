@@ -3,36 +3,15 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use std::{fmt::Debug, mem::swap, str};
 
+use backtrace::Backtrace;
 use egui::{Align2, Color32, Ui, Vec2};
-use eyre::bail;
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
-use tracing::{debug, error, info, instrument, trace};
+use tracing::{debug, info, instrument};
 
-use crate::dom::{Node, NodeData, OwnedNode};
-use crate::layout::{Layout, OwnedLayout};
-use crate::parse::{html_token, HtmlToken};
-use crate::viewport::ViewportInfo;
-use crate::*;
-
-// ([if the child is one of these], [the stack must not end with this sequence])
-const NO_NEST: &[(&[&str], &[&str])] = &[
-    (
-        &["p", "table", "form", "h1", "h2", "h3", "h4", "h5", "h6"],
-        &["p"],
-    ),
-    (&["li"], &["li"]),
-    (&["dt", "dd"], &["dt"]),
-    (&["dt", "dd"], &["dd"]),
-    (&["tr"], &["tr"]),
-    (&["tr"], &["tr", "td"]),
-    (&["tr"], &["tr", "th"]),
-    (&["td", "th"], &["td"]),
-    (&["td", "th"], &["th"]),
-];
-const SELF_CLOSING: &[&str] = &[
-    "!doctype", "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
-    "param", "source", "track", "wbr",
-];
+use wbe_core::dump_backtrace;
+use wbe_dom::{Node, NodeData, OwnedNode};
+use wbe_html_parser::parse_html;
+use wbe_layout::{viewport::ViewportInfo, Layout, OwnedLayout};
 
 #[derive(Default, Clone)]
 pub struct Document(Arc<RwLock<OwnedDocument>>);
@@ -81,7 +60,7 @@ pub enum OwnedDocument {
         response_body: String,
         dom: Node,
         layout: Layout,
-        viewport: viewport::ViewportInfo,
+        viewport: ViewportInfo,
     },
 }
 
@@ -141,7 +120,7 @@ impl OwnedDocument {
 
     #[instrument]
     fn load(location: String) -> eyre::Result<OwnedDocument> {
-        let (_headers, body) = http::request(&location)?;
+        let (_headers, body) = wbe_http::request(&location)?;
 
         Ok(OwnedDocument::Loaded {
             location,
@@ -152,88 +131,7 @@ impl OwnedDocument {
 
     #[instrument(skip(response_body))]
     fn parse(location: String, response_body: String) -> eyre::Result<OwnedDocument> {
-        let mut parent = Node::new(NodeData::Document);
-        let mut stack = vec![parent.clone()];
-        let mut names_stack: Vec<&str> = vec![];
-        let mut input = &*response_body;
-
-        while !input.is_empty() {
-            let (rest, token) = match html_token(input) {
-                Ok(result) => result,
-                // Err(nom::Err::Incomplete(_)) => ("", HtmlToken::Text(input)),
-                Err(e) => bail!("{}; input={:?}", e, input),
-            };
-            match token {
-                HtmlToken::Comment(text) => {
-                    parent.append(&[Node::comment(text.to_owned())]);
-                }
-                HtmlToken::Script(attrs, text) => {
-                    let attrs = attrs
-                        .iter()
-                        .map(|&(n, v)| (n.to_owned(), v.to_owned()))
-                        .collect();
-                    parent.append(&[Node::element("script".to_owned(), attrs)
-                        .append(&[Node::text(text.to_owned())])]);
-                }
-                HtmlToken::Style(attrs, text) => {
-                    let attrs = attrs
-                        .iter()
-                        .map(|&(n, v)| (n.to_owned(), v.to_owned()))
-                        .collect();
-                    parent.append(&[Node::element("style".to_owned(), attrs)
-                        .append(&[Node::text(text.to_owned())])]);
-                }
-                HtmlToken::Tag(true, name, _attrs) => {
-                    if let Some((i, _)) = names_stack
-                        .iter()
-                        .enumerate()
-                        .rfind(|(_, x)| x.eq_ignore_ascii_case(name))
-                    {
-                        for _ in 0..(names_stack.len() - i) {
-                            let _ = stack.pop().unwrap();
-                            let _ = names_stack.pop().unwrap();
-                            parent = parent.parent().unwrap();
-                        }
-                    } else {
-                        error!("failed to find match for closing tag: {:?}", name);
-                    }
-                }
-                HtmlToken::Tag(false, name, attrs) => {
-                    let attrs = attrs
-                        .iter()
-                        .map(|&(n, v)| (n.to_owned(), v.to_owned()))
-                        .collect();
-                    let element = Node::element(name.to_owned(), attrs);
-
-                    for &(child_names, suffix) in NO_NEST {
-                        if child_names.contains(&&*name) {
-                            if names_stack.ends_with(suffix) {
-                                trace!(true, name, ?child_names, ?suffix, ?names_stack);
-                                for _ in 0..suffix.len() {
-                                    let _ = stack.pop().unwrap();
-                                    let _ = names_stack.pop().unwrap();
-                                    parent = parent.parent().unwrap();
-                                }
-                            }
-                        }
-                    }
-
-                    parent.append(&[element.clone()]);
-
-                    if !SELF_CLOSING.contains(&&*name) {
-                        stack.push(element.clone());
-                        names_stack.push(name);
-                        parent = element;
-                    }
-                }
-                HtmlToken::Text(text) => {
-                    parent.append(&[Node::text(text.to_owned())]);
-                }
-            }
-            input = rest;
-        }
-
-        let dom = stack[0].clone();
+        let dom = parse_html(&response_body)?;
         debug!(%dom);
 
         Ok(OwnedDocument::Parsed {
