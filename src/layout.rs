@@ -73,10 +73,6 @@ pub struct OwnedLayout {
     pub mode: LayoutMode,
     pub display_list: Vec<PaintText>,
     pub rect: Rect,
-
-    font_size: f32,
-    font_weight_bold: bool,
-    font_style_italic: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -86,9 +82,21 @@ pub enum LayoutMode {
     Inline,
 }
 
-#[derive(Debug)]
-pub struct LayoutContext<'v> {
+struct DocumentContext<'v, 'p> {
     viewport: &'v ViewportInfo,
+    display_list: &'p mut Vec<PaintText>,
+    block: BlockContext,
+}
+
+#[derive(Debug, Clone)]
+struct BlockContext {
+    font_size: f32,
+    font_weight_bold: bool,
+    font_style_italic: bool,
+}
+
+#[derive(Debug)]
+struct InlineContext {
     cursor: Pos2,
     max_ascent: f32,
     max_height: f32,
@@ -118,9 +126,6 @@ impl Layout {
             mode,
             display_list: vec![],
             rect: Rect::NAN,
-            font_size: FONT_SIZE,
-            font_weight_bold: false,
-            font_style_italic: false,
         })))
     }
 
@@ -154,12 +159,7 @@ impl Layout {
     }
 
     pub fn block(&self, node: Node) -> Self {
-        let result = Self::with_mode(node, LayoutMode::Block);
-        result.write().font_size = self.read().font_size;
-        result.write().font_weight_bold = self.read().font_weight_bold;
-        result.write().font_style_italic = self.read().font_style_italic;
-
-        result
+        Self::with_mode(node, LayoutMode::Block)
     }
 
     pub fn append(&self, child: Layout) -> Self {
@@ -203,6 +203,26 @@ impl Layout {
     }
 
     pub fn layout(&self, viewport: &ViewportInfo) -> eyre::Result<()> {
+        assert!(self.mode() == LayoutMode::Document);
+
+        let mut display_list = vec![];
+        let mut document_context = DocumentContext {
+            viewport,
+            display_list: &mut display_list,
+            block: BlockContext {
+                font_size: FONT_SIZE,
+                font_weight_bold: false,
+                font_style_italic: false,
+            },
+        };
+
+        self.layout0(&mut document_context)?;
+        self.write().display_list = display_list;
+
+        Ok(())
+    }
+
+    fn layout0(&self, dc: &mut DocumentContext) -> eyre::Result<()> {
         // trace!(mode = ?self.mode(), node = %*self.node().data());
 
         let initial_rect = |previous: Option<&Layout>| {
@@ -213,6 +233,8 @@ impl Layout {
             result.set_height(0.0);
             result
         };
+
+        let old_block_context = dc.block.clone();
 
         // separate let releases RwLock read!
         let node = self.node().clone();
@@ -227,28 +249,28 @@ impl Layout {
                 self.write().rect.max.y += MARGIN;
             }
             x if x.eq_ignore_ascii_case("h1") => {
-                self.write().font_size *= 2.5;
-                self.write().font_weight_bold = true;
+                dc.block.font_size *= 2.5;
+                dc.block.font_weight_bold = true;
             }
             x if x.eq_ignore_ascii_case("h2") => {
-                self.write().font_size *= 2.0;
-                self.write().font_weight_bold = true;
+                dc.block.font_size *= 2.0;
+                dc.block.font_weight_bold = true;
             }
             x if x.eq_ignore_ascii_case("h3") => {
-                self.write().font_size *= 1.5;
-                self.write().font_weight_bold = true;
+                dc.block.font_size *= 1.5;
+                dc.block.font_weight_bold = true;
             }
             x if x.eq_ignore_ascii_case("h4") => {
-                self.write().font_size *= 1.25;
-                self.write().font_weight_bold = true;
+                dc.block.font_size *= 1.25;
+                dc.block.font_weight_bold = true;
             }
             x if x.eq_ignore_ascii_case("h5") => {
-                self.write().font_size *= 1.0;
-                self.write().font_weight_bold = true;
+                dc.block.font_size *= 1.0;
+                dc.block.font_weight_bold = true;
             }
             x if x.eq_ignore_ascii_case("h6") => {
-                self.write().font_size *= 0.75;
-                self.write().font_weight_bold = true;
+                dc.block.font_size *= 0.75;
+                dc.block.font_weight_bold = true;
             }
             _ => {}
         }
@@ -256,15 +278,11 @@ impl Layout {
         match self.mode() {
             LayoutMode::Document => {
                 self.write().rect =
-                    Rect::from_min_size(viewport.rect.min, vec2(viewport.rect.width(), 0.0));
+                    Rect::from_min_size(dc.viewport.rect.min, vec2(dc.viewport.rect.width(), 0.0));
 
                 let layout = self.block(self.node().clone());
                 layout.write().rect = initial_rect(None);
-                layout.layout(viewport)?;
-                self.write()
-                    .display_list
-                    .append(&mut layout.write().display_list);
-                layout.write().display_list.shrink_to_fit();
+                layout.layout0(dc)?;
 
                 // setting max rather than adding layout rect size (for hack)
                 self.write().rect.max = layout.read().rect.max;
@@ -273,7 +291,7 @@ impl Layout {
                 self.write().rect.max.y += MARGIN;
 
                 self.append(layout);
-                debug!(mode = ?self.mode(), height = self.read().rect.height(), display_list_len = self.read().display_list.len());
+                debug!(mode = ?self.mode(), height = self.read().rect.height(), display_list_len = dc.display_list.len());
             }
             LayoutMode::Block => {
                 // separate let releases RwLock read!
@@ -285,15 +303,10 @@ impl Layout {
                         for child in &*self.node().children() {
                             let layout = self.block(child.clone());
                             layout.write().rect = initial_rect(layouts.last());
-                            layout.layout(viewport)?;
+                            layout.layout0(dc)?;
                             layouts.push(layout);
                         }
                         for layout in layouts {
-                            self.write()
-                                .display_list
-                                .append(&mut layout.write().display_list);
-                            layout.write().display_list.shrink_to_fit();
-
                             // setting max rather than adding layout rect size (for hack)
                             self.write().rect.max = layout.read().rect.max;
 
@@ -301,8 +314,7 @@ impl Layout {
                         }
                     }
                     Some(LayoutMode::Inline) => {
-                        let mut context = LayoutContext {
-                            viewport,
+                        let mut inline_context = InlineContext {
                             cursor: self.read().rect.min,
                             max_ascent: 0.0,
                             max_height: 0.0,
@@ -311,9 +323,9 @@ impl Layout {
 
                         // separate let releases RwLock read!
                         let node = self.node().clone();
-                        self.recurse(node, &mut context)?;
-                        self.flush(&mut context)?;
-                        self.write().rect.set_bottom(context.cursor.y);
+                        self.recurse(node, dc, &mut inline_context)?;
+                        self.flush(dc, &mut inline_context)?;
+                        self.write().rect.set_bottom(inline_context.cursor.y);
                     }
                     _ => unreachable!(),
                 }
@@ -321,24 +333,31 @@ impl Layout {
             LayoutMode::Inline => unreachable!(),
         }
 
+        dc.block = old_block_context;
+
         trace!(mode = ?self.mode(), node = %*self.node().data(), outer = ?self.mode(), inner = ?Self::mode_for(self.node().clone()), height = self.read().rect.height());
 
         Ok(())
     }
 
-    pub fn recurse(&self, node: Node, context: &mut LayoutContext) -> eyre::Result<()> {
+    fn recurse(
+        &self,
+        node: Node,
+        dc: &mut DocumentContext,
+        ic: &mut InlineContext,
+    ) -> eyre::Result<()> {
         // trace!(mode = ?LayoutMode::Inline, node = %*node.data());
         match node.r#type() {
             NodeType::Document => unreachable!(),
             NodeType::Element => {
-                self.open_tag(&node.name(), context);
+                self.open_tag(&node.name(), dc, ic);
                 for child in &*node.children() {
-                    self.recurse(child.clone(), context)?;
+                    self.recurse(child.clone(), dc, ic)?;
                 }
-                self.close_tag(&node.name(), context);
+                self.close_tag(&node.name(), dc, ic);
             }
             NodeType::Text => {
-                self.text(node.clone(), context)?;
+                self.text(node.clone(), dc, ic)?;
             }
             NodeType::Comment => return Ok(()),
         }
@@ -346,25 +365,30 @@ impl Layout {
         Ok(())
     }
 
-    pub fn text(&self, node: Node, context: &mut LayoutContext) -> eyre::Result<()> {
+    fn text(
+        &self,
+        node: Node,
+        dc: &mut DocumentContext,
+        ic: &mut InlineContext,
+    ) -> eyre::Result<()> {
         assert_eq!(node.r#type(), NodeType::Text);
         let font = FontInfo::new(
             FontFamily::Name(
-                match (self.read().font_weight_bold, self.read().font_style_italic) {
+                match (dc.block.font_weight_bold, dc.block.font_style_italic) {
                     (false, false) => FONTS[0].0.into(),
                     (true, false) => FONTS[1].0.into(),
                     (false, true) => FONTS[2].0.into(),
                     (true, true) => FONTS[3].0.into(),
                 },
             ),
-            match (self.read().font_weight_bold, self.read().font_style_italic) {
+            match (dc.block.font_weight_bold, dc.block.font_style_italic) {
                 (false, false) => FONTS[0].1,
                 (true, false) => FONTS[1].1,
                 (false, true) => FONTS[2].1,
                 (true, true) => FONTS[3].1,
             },
-            self.read().font_size,
-            context.viewport.scale,
+            dc.block.font_size,
+            dc.viewport.scale,
         )?;
         let rect = self.read().rect;
 
@@ -384,20 +408,19 @@ impl Layout {
                     .chars()
                     .map(|c| font.ab.h_advance(font.ab.glyph_id(c)))
                     .sum::<f32>()
-                    / context.viewport.scale;
-                let ascent = font.ab.ascent() / context.viewport.scale;
-                let height = font.ab.height() / context.viewport.scale;
-                if context.cursor.x + advance > rect.max.x {
+                    / dc.viewport.scale;
+                let ascent = font.ab.ascent() / dc.viewport.scale;
+                let height = font.ab.height() / dc.viewport.scale;
+                if ic.cursor.x + advance > rect.max.x {
                     // trace!(cursor = ?context.cursor, advance, max_x = rect.max.x);
-                    self.flush(context)?;
+                    self.flush(dc, ic)?;
                 }
-                context.max_ascent = context.max_ascent.max(ascent);
-                context.max_height = context.max_height.max(height);
-                let rect = Rect::from_min_size(context.cursor, vec2(advance, height));
-                context
-                    .line_display_list
+                ic.max_ascent = ic.max_ascent.max(ascent);
+                ic.max_height = ic.max_height.max(height);
+                let rect = Rect::from_min_size(ic.cursor, vec2(advance, height));
+                ic.line_display_list
                     .push(PaintText(rect, font.clone(), word.to_string()));
-                context.cursor.x += advance;
+                ic.cursor.x += advance;
             }
             input = rest;
         }
@@ -406,36 +429,36 @@ impl Layout {
         Ok(())
     }
 
-    pub fn flush(&self, context: &mut LayoutContext) -> eyre::Result<()> {
-        for mut paint in context.line_display_list.drain(..) {
-            *paint.0.top_mut() += context.max_ascent - paint.1.ab.ascent() / context.viewport.scale;
-            self.write().display_list.push(paint);
+    fn flush(&self, dc: &mut DocumentContext, ic: &mut InlineContext) -> eyre::Result<()> {
+        for mut paint in ic.line_display_list.drain(..) {
+            *paint.0.top_mut() += ic.max_ascent - paint.1.ab.ascent() / dc.viewport.scale;
+            dc.display_list.push(paint);
         }
 
-        context.cursor.x = self.read().rect.min.x;
-        context.cursor.y += context.max_height;
-        context.max_ascent = 0.0;
-        context.max_height = 0.0;
+        ic.cursor.x = self.read().rect.min.x;
+        ic.cursor.y += ic.max_height;
+        ic.max_ascent = 0.0;
+        ic.max_height = 0.0;
 
         Ok(())
     }
 
-    pub fn open_tag(&self, name: &str, _context: &mut LayoutContext) {
+    fn open_tag(&self, name: &str, dc: &mut DocumentContext, _ic: &mut InlineContext) {
         match name {
-            x if x.eq_ignore_ascii_case("b") => self.write().font_weight_bold = true,
-            x if x.eq_ignore_ascii_case("i") => self.write().font_style_italic = true,
-            x if x.eq_ignore_ascii_case("big") => self.write().font_size *= 1.5,
-            x if x.eq_ignore_ascii_case("small") => self.write().font_size /= 1.5,
+            x if x.eq_ignore_ascii_case("b") => dc.block.font_weight_bold = true,
+            x if x.eq_ignore_ascii_case("i") => dc.block.font_style_italic = true,
+            x if x.eq_ignore_ascii_case("big") => dc.block.font_size *= 1.5,
+            x if x.eq_ignore_ascii_case("small") => dc.block.font_size /= 1.5,
             _ => {}
         }
     }
 
-    pub fn close_tag(&self, name: &str, _context: &mut LayoutContext) {
+    fn close_tag(&self, name: &str, dc: &mut DocumentContext, _ic: &mut InlineContext) {
         match name {
-            x if x.eq_ignore_ascii_case("b") => self.write().font_weight_bold = false,
-            x if x.eq_ignore_ascii_case("i") => self.write().font_style_italic = false,
-            x if x.eq_ignore_ascii_case("big") => self.write().font_size /= 1.5,
-            x if x.eq_ignore_ascii_case("small") => self.write().font_size *= 1.5,
+            x if x.eq_ignore_ascii_case("b") => dc.block.font_weight_bold = false,
+            x if x.eq_ignore_ascii_case("i") => dc.block.font_style_italic = false,
+            x if x.eq_ignore_ascii_case("big") => dc.block.font_size /= 1.5,
+            x if x.eq_ignore_ascii_case("small") => dc.block.font_size *= 1.5,
             _ => {}
         }
     }
