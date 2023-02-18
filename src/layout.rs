@@ -264,6 +264,7 @@ impl Layout {
                 self.write()
                     .display_list
                     .append(&mut layout.write().display_list);
+                layout.write().display_list.shrink_to_fit();
 
                 // setting max rather than adding layout rect size (for hack)
                 self.write().rect.max = layout.read().rect.max;
@@ -291,6 +292,7 @@ impl Layout {
                             self.write()
                                 .display_list
                                 .append(&mut layout.write().display_list);
+                            layout.write().display_list.shrink_to_fit();
 
                             // setting max rather than adding layout rect size (for hack)
                             self.write().rect.max = layout.read().rect.max;
