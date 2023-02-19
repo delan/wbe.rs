@@ -27,7 +27,7 @@ const SELF_CLOSING: &[&str] = &[
 pub fn parse_html(response_body: &str) -> eyre::Result<Node> {
     let mut parent = Node::new(NodeData::Document);
     let mut stack = vec![parent.clone()];
-    let mut names_stack: Vec<&str> = vec![];
+    let mut names_stack: Vec<String> = vec![];
     let mut input = &*response_body;
 
     while !input.is_empty() {
@@ -52,13 +52,28 @@ pub fn parse_html(response_body: &str) -> eyre::Result<Node> {
                         .append(&[Node::text(text.to_owned())])]);
             }
             HtmlToken::Tag(false, name, attrs) => {
-                let attrs = attrs.into_iter().map(|(n, v)| (n.to_owned(), v)).collect();
-                let element = Node::element(name.to_owned(), attrs);
+                // html spec says parser can ascii lowercase tag and attr names
+                let name = name.to_ascii_lowercase();
+                let attrs = attrs
+                    .into_iter()
+                    .map(|(n, v)| (n.to_ascii_lowercase(), v))
+                    .collect();
+                let element = Node::element(name, attrs);
 
                 for &(child_names, suffix) in NO_NEST {
-                    if child_names.contains(&&*name) {
-                        if names_stack.ends_with(suffix) {
-                            trace!(true, name, ?child_names, ?suffix, ?names_stack);
+                    if child_names.contains(&&*element.name()) {
+                        if names_stack.len() < suffix.len() {
+                            continue;
+                        }
+                        let i = names_stack.len() - suffix.len();
+                        if names_stack[i..].eq(suffix) {
+                            trace!(
+                                true,
+                                name = &*element.name(),
+                                ?child_names,
+                                ?suffix,
+                                ?names_stack
+                            );
                             for _ in 0..suffix.len() {
                                 let _ = stack.pop().unwrap();
                                 let _ = names_stack.pop().unwrap();
@@ -70,25 +85,26 @@ pub fn parse_html(response_body: &str) -> eyre::Result<Node> {
 
                 parent.append(&[element.clone()]);
 
-                if !SELF_CLOSING.contains(&&*name) {
+                if !SELF_CLOSING.contains(&&*element.name()) {
                     stack.push(element.clone());
-                    names_stack.push(name);
+                    names_stack.push(element.name().to_owned());
                     parent = element;
                 }
             }
             HtmlToken::Tag(true, name, _attrs) => {
-                if let Some((i, _)) = names_stack
-                    .iter()
-                    .enumerate()
-                    .rfind(|(_, x)| x.eq_ignore_ascii_case(name))
-                {
+                // html spec says parser can ascii lowercase tag and attr names
+                let name = name.to_ascii_lowercase();
+                if let Some(i) = names_stack.iter().rposition(|x| x == &name) {
                     for _ in 0..(names_stack.len() - i) {
                         let _ = stack.pop().unwrap();
                         let _ = names_stack.pop().unwrap();
                         parent = parent.parent().unwrap();
                     }
                 } else {
-                    error!("failed to find match for closing tag: {:?}", name);
+                    error!(
+                        "failed to find match for closing tag: {:?} in {:?}",
+                        name, names_stack
+                    );
                 }
             }
             HtmlToken::Text(text) => {
