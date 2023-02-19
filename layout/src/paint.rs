@@ -1,6 +1,6 @@
-use std::{fmt::Debug, str};
+use std::fmt::Debug;
 
-use egui::{Color32, FontId, Rect};
+use egui::{Color32, Rect};
 
 use crate::*;
 
@@ -15,34 +15,6 @@ impl Paint {
         match self {
             Paint::Text(rect, _, _, _) => rect,
             Paint::Fill(rect, _) => rect,
-        }
-    }
-
-    pub fn rect_mut(&mut self) -> &mut Rect {
-        match self {
-            Paint::Text(rect, _, _, _) => rect,
-            Paint::Fill(rect, _) => rect,
-        }
-    }
-
-    pub fn font(&self) -> &FontId {
-        match self {
-            Paint::Text(_, _, font, _) => &font.egui,
-            Paint::Fill(_, _) => todo!(),
-        }
-    }
-
-    pub fn text(&self) -> &str {
-        match self {
-            Paint::Text(_, _, _, text) => text,
-            Paint::Fill(_, _) => todo!(),
-        }
-    }
-
-    pub fn fill_color(&self) -> &Color32 {
-        match self {
-            Paint::Text(_, color, _, _) => todo!(),
-            Paint::Fill(_, color) => color,
         }
     }
 }

@@ -1,7 +1,7 @@
 use eyre::bail;
+use tracing::{error, trace};
 
-use tracing::{debug, error, trace};
-use wbe_dom::{Node, NodeData, Style};
+use wbe_dom::{Node, NodeData};
 use wbe_html_lexer::{html_token, HtmlToken};
 
 // ([if the child is one of these], [the stack must not end with this sequence])

@@ -1,8 +1,8 @@
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take, take_till, take_until, take_while, take_while1},
-    character::complete::{alpha1, anychar, char, one_of},
-    combinator::{fail, map_parser, opt, peek, recognize},
+    bytes::complete::{tag, take, take_until, take_while, take_while1},
+    character::complete::{alpha1, anychar, one_of},
+    combinator::{fail, opt, peek, recognize},
     multi::{many0, many1, many_till, separated_list0, separated_list1},
     sequence::{preceded, separated_pair, terminated, tuple},
     IResult, Parser,
@@ -138,9 +138,31 @@ pub fn css_big_token<'i, O: 'i>(parse: impl FnMut(&'i str) -> IResult<&str, O> +
     )(input)
 }
 
+fn rule_with_bad_selector(input: &str) -> IResult<&str, &str> {
+    recognize(tuple((take_until("}"), tag("}"))))(input)
+}
+
 pub type RuleList<'s> = Vec<Rule<'s>>;
+#[rustfmt::skip]
 pub fn css_file(input: &str) -> IResult<&str, RuleList> {
-    many0(css_big_token(css_rule))(input)
+    let mut input = input;
+    let mut result = vec![];
+
+    while !input.is_empty() {
+        if let Ok((rest, rule)) = css_big_token(css_rule)(input) {
+            result.push(rule);
+            input = rest;
+            continue;
+        }
+        if let Ok((rest, _)) = rule_with_bad_selector(input) {
+            input = rest;
+            continue;
+        }
+        // TODO warn
+        input = &input[input.len()..];
+    }
+
+    Ok((input, result))
 }
 
 #[test]
@@ -153,4 +175,6 @@ fn test_css_file() {
     assert_eq!(css_selector_list("x{}"), Ok(("{}", vec![(vec!["x"], vec![])])));
     assert_eq!(css_rule("x{}"), Ok(("", (vec![(vec!["x"], vec![])], vec![]))));
     assert_eq!(css_file("x{}"), Ok(("", vec![(vec![(vec!["x"], vec![])], vec![])])));
+    assert_eq!(css_file("*{}x{}"), Ok(("", vec![(vec![(vec!["x"], vec![])], vec![])])));
+    assert_eq!(css_file("\n* {\n    box-sizing: border-box;\n}\nheader, nav, footer {\n    display: block;\n}\nhtml"), Ok(("", vec![])));
 }

@@ -5,7 +5,7 @@ use std::{
 
 use egui::Color32;
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
-use tracing::{instrument, trace};
+use tracing::{error, instrument, trace, warn};
 
 pub type NodeRead<'n, T> = RwLockReadGuardRef<'n, OwnedNode, T>;
 pub type NodeWrite<'n, T> = RwLockWriteGuardRefMut<'n, OwnedNode, T>;
@@ -37,6 +37,7 @@ pub struct Style {
     pub background_color: Option<String>,
     pub color: Option<String>,
 }
+
 fn get_color(color: &str) -> Color32 {
     match color {
         "transparent" => Color32::TRANSPARENT,
@@ -45,7 +46,12 @@ fn get_color(color: &str) -> Color32 {
         "black" => Color32::BLACK,
         "rgb(204,0,0)" => Color32::from_rgb(204, 0, 0),
         "#FC0" => Color32::from_rgb(0xFF, 0xCC, 0x00),
-        _ => panic!(),
+        "#663399" => Color32::from_rgb(0x66, 0x33, 0x99),
+        "#008080" => Color32::from_rgb(0x00, 0x80, 0x80),
+        other => {
+            error!("unknown color {:?}", other);
+            Color32::TEMPORARY_COLOR
+        }
     }
 }
 impl Style {
