@@ -142,10 +142,8 @@ impl Layout {
             NodeType::Document => Some(LayoutMode::Block),
             NodeType::Element => {
                 for child in &*node.children() {
-                    for name in DISPLAY_BLOCK {
-                        if name.eq_ignore_ascii_case(&child.name()) {
-                            return Some(LayoutMode::Block);
-                        }
+                    if DISPLAY_BLOCK.contains(&&*child.name()) {
+                        return Some(LayoutMode::Block);
                     }
                 }
 
@@ -247,37 +245,37 @@ impl Layout {
 
         // separate let releases RwLock read!
         let node = self.node().clone();
-        match node.name() {
+        match &*node.name() {
             // presentational hints
-            x if DISPLAY_NONE.iter().any(|y| y.eq_ignore_ascii_case(&x)) => return Ok(()),
-            x if x.eq_ignore_ascii_case("body") => {
+            x if DISPLAY_NONE.contains(&x) => return Ok(()),
+            "body" => {
                 // hack for body{margin:1em}
                 self.write().rect.min.x += MARGIN;
                 self.write().rect.max.x -= MARGIN;
                 self.write().rect.min.y += MARGIN;
                 self.write().rect.max.y += MARGIN;
             }
-            x if x.eq_ignore_ascii_case("h1") => {
+            "h1" => {
                 dc.block.font_size *= 2.5;
                 dc.block.font_weight_bold = true;
             }
-            x if x.eq_ignore_ascii_case("h2") => {
+            "h2" => {
                 dc.block.font_size *= 2.0;
                 dc.block.font_weight_bold = true;
             }
-            x if x.eq_ignore_ascii_case("h3") => {
+            "h3" => {
                 dc.block.font_size *= 1.5;
                 dc.block.font_weight_bold = true;
             }
-            x if x.eq_ignore_ascii_case("h4") => {
+            "h4" => {
                 dc.block.font_size *= 1.25;
                 dc.block.font_weight_bold = true;
             }
-            x if x.eq_ignore_ascii_case("h5") => {
+            "h5" => {
                 dc.block.font_size *= 1.0;
                 dc.block.font_weight_bold = true;
             }
-            x if x.eq_ignore_ascii_case("h6") => {
+            "h6" => {
                 dc.block.font_size *= 0.75;
                 dc.block.font_weight_bold = true;
             }
@@ -500,20 +498,20 @@ impl Layout {
 
     fn open_tag(&self, name: &str, dc: &mut DocumentContext, _ic: &mut InlineContext) {
         match name {
-            x if x.eq_ignore_ascii_case("b") => dc.block.font_weight_bold = true,
-            x if x.eq_ignore_ascii_case("i") => dc.block.font_style_italic = true,
-            x if x.eq_ignore_ascii_case("big") => dc.block.font_size *= 1.5,
-            x if x.eq_ignore_ascii_case("small") => dc.block.font_size /= 1.5,
+            "b" => dc.block.font_weight_bold = true,
+            "i" => dc.block.font_style_italic = true,
+            "big" => dc.block.font_size *= 1.5,
+            "small" => dc.block.font_size /= 1.5,
             _ => {}
         }
     }
 
     fn close_tag(&self, name: &str, dc: &mut DocumentContext, _ic: &mut InlineContext) {
         match name {
-            x if x.eq_ignore_ascii_case("b") => dc.block.font_weight_bold = false,
-            x if x.eq_ignore_ascii_case("i") => dc.block.font_style_italic = false,
-            x if x.eq_ignore_ascii_case("big") => dc.block.font_size /= 1.5,
-            x if x.eq_ignore_ascii_case("small") => dc.block.font_size *= 1.5,
+            "b" => dc.block.font_weight_bold = false,
+            "i" => dc.block.font_style_italic = false,
+            "big" => dc.block.font_size /= 1.5,
+            "small" => dc.block.font_size *= 1.5,
             _ => {}
         }
     }
