@@ -209,8 +209,22 @@ impl Node {
             .ok()
     }
 
+    pub fn text_content(&self) -> String {
+        let mut result = String::new();
+
+        for node in self.descendants().filter(|x| x.r#type() == NodeType::Text) {
+            result += &*node.value().unwrap();
+        }
+
+        result
+    }
+
     pub fn children(&self) -> NodeRead<[Node]> {
         self.read().map(|x| &*x.children)
+    }
+
+    pub fn descendants(&self) -> impl Iterator<Item = Node> {
+        NodeIterator(vec![(self.clone(), 0)])
     }
 }
 
@@ -231,5 +245,34 @@ impl NodeData {
             NodeData::Text(_) => panic!(),
             NodeData::Comment(_) => panic!(),
         }
+    }
+}
+
+struct NodeIterator(Vec<(Node, usize)>);
+impl Iterator for NodeIterator {
+    type Item = Node;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // e.g. (#document, 2), (html, 1), (head, 0)
+        while let Some((node, i)) = self.0.last_mut() {
+            // if head has a children[0]
+            if *i < node.children().len() {
+                // this time, return head.children[0]
+                let result = node.children()[*i].clone();
+
+                // next time, try head.children[1]
+                *i += 1;
+
+                // but actually, next time, try head.children[0].children[0]
+                self.0.push((result.clone(), 0));
+
+                return Some(result);
+            }
+
+            // we’ve run out, pop back to parent
+            self.0.pop();
+        }
+
+        None
     }
 }

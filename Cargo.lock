@@ -2696,10 +2696,12 @@ dependencies = [
  "owning_ref",
  "tracing",
  "wbe-core",
+ "wbe-css-parser",
  "wbe-dom",
  "wbe-html-parser",
  "wbe-http",
  "wbe-layout",
+ "wbe-style",
 ]
 
 [[package]]
@@ -2774,6 +2776,10 @@ dependencies = [
  "wbe-dom",
  "wbe-html-lexer",
 ]
+
+[[package]]
+name = "wbe-style"
+version = "0.1.0"
 
 [[package]]
 name = "web-sys"

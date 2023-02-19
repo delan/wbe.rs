@@ -1,5 +1,5 @@
 [workspace]
-members = ["browser", "core", "css-parser", "dom", "html-lexer", "html-parser", "http", "layout"]
+members = ["browser", "core", "css-parser", "dom", "html-lexer", "html-parser", "http", "layout", "style"]
 
 [package]
 name = "wbe"
