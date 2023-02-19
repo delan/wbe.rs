@@ -40,7 +40,9 @@ impl Debug for Node {
         write!(
             f,
             "{}",
-            format!("{:?}", self.read()).strip_prefix("Owned").unwrap()
+            format!("{:?}", &*self.read())
+                .strip_prefix("Owned")
+                .unwrap()
         )
     }
 }
