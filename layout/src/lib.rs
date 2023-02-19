@@ -1,8 +1,11 @@
+#![feature(array_chunks)]
+#![feature(iter_array_chunks)]
+
 pub mod font;
 pub mod paint;
 pub mod viewport;
 
-pub use crate::{font::FontInfo, paint::PaintText, viewport::ViewportInfo};
+pub use crate::{font::FontInfo, paint::Paint, viewport::ViewportInfo};
 
 use std::{
     fmt::Debug,
@@ -18,7 +21,7 @@ use tracing::{debug, trace};
 use unicode_segmentation::UnicodeSegmentation;
 
 use wbe_core::{dump_backtrace, FONTS, FONT_SIZE, MARGIN};
-use wbe_dom::{Node, NodeData, NodeType};
+use wbe_dom::{Node, NodeData, NodeType, Style};
 use wbe_html_lexer::{html_word, HtmlWord};
 
 const DISPLAY_NONE: &[&str] = &["#comment", "head", "title", "script", "style"];
@@ -72,7 +75,7 @@ pub struct OwnedLayout {
     pub previous: Weak<RwLock<OwnedLayout>>,
     pub children: Vec<Layout>,
     pub mode: LayoutMode,
-    pub display_list: Vec<PaintText>,
+    pub display_list: Vec<Paint>,
     pub rect: Rect,
 }
 
@@ -85,7 +88,7 @@ pub enum LayoutMode {
 
 struct DocumentContext<'v, 'p> {
     viewport: &'v ViewportInfo,
-    display_list: &'p mut Vec<PaintText>,
+    display_list: &'p mut Vec<Paint>,
     block: BlockContext,
 }
 
@@ -94,6 +97,8 @@ struct BlockContext {
     font_size: f32,
     font_weight_bold: bool,
     font_style_italic: bool,
+
+    style: Style,
 }
 
 #[derive(Debug)]
@@ -101,7 +106,9 @@ struct InlineContext {
     cursor: Pos2,
     max_ascent: f32,
     max_height: f32,
-    line_display_list: Vec<PaintText>,
+    line_display_list: Vec<Paint>,
+
+    style: Style,
 }
 
 #[derive(Clone)]
@@ -199,7 +206,7 @@ impl Layout {
         self.read().map(|x| &*x.children)
     }
 
-    pub fn display_list(&self) -> LayoutRead<[PaintText]> {
+    pub fn display_list(&self) -> LayoutRead<[Paint]> {
         self.read().map(|x| &*x.display_list)
     }
 
@@ -214,6 +221,7 @@ impl Layout {
                 font_size: FONT_SIZE,
                 font_weight_bold: false,
                 font_style_italic: false,
+                style: Style::default(),
             },
         };
 
@@ -275,6 +283,8 @@ impl Layout {
             }
             _ => {}
         }
+        dc.block.style = Style::new_inherited(&dc.block.style);
+        dc.block.style.apply(&node.data().style());
 
         match self.mode() {
             LayoutMode::Document => {
@@ -299,6 +309,8 @@ impl Layout {
                 let node = self.node().clone();
                 match Self::mode_for(node) {
                     Some(LayoutMode::Block) => {
+                        let i = dc.display_list.len();
+
                         // temporary layout list releases RwLock read!
                         let mut layouts: Vec<Layout> = vec![];
                         for child in &*self.node().children() {
@@ -313,13 +325,22 @@ impl Layout {
 
                             self.append(layout);
                         }
+
+                        dc.display_list.insert(
+                            i,
+                            Paint::Fill(self.read().rect, dc.block.style.get_background_color()),
+                        );
                     }
                     Some(LayoutMode::Inline) => {
+                        let i = dc.display_list.len();
+
                         let mut inline_context = InlineContext {
                             cursor: self.read().rect.min,
                             max_ascent: 0.0,
                             max_height: 0.0,
                             line_display_list: vec![],
+
+                            style: Style::new_inherited(&dc.block.style),
                         };
 
                         // separate let releases RwLock read!
@@ -327,6 +348,11 @@ impl Layout {
                         self.recurse(node, dc, &mut inline_context)?;
                         self.flush(dc, &mut inline_context)?;
                         self.write().rect.set_bottom(inline_context.cursor.y);
+
+                        dc.display_list.insert(
+                            i,
+                            Paint::Fill(self.read().rect, dc.block.style.get_background_color()),
+                        );
                     }
                     _ => unreachable!(),
                 }
@@ -351,11 +377,14 @@ impl Layout {
         match node.r#type() {
             NodeType::Document => unreachable!(),
             NodeType::Element => {
+                let old_style = ic.style.clone();
+                ic.style = node.data().style();
                 self.open_tag(&node.name(), dc, ic);
                 for child in &*node.children() {
                     self.recurse(child.clone(), dc, ic)?;
                 }
                 self.close_tag(&node.name(), dc, ic);
+                ic.style = old_style;
             }
             NodeType::Text => {
                 self.text(node.clone(), dc, ic)?;
@@ -420,7 +449,13 @@ impl Layout {
                 ic.max_height = ic.max_height.max(height);
                 let rect = Rect::from_min_size(ic.cursor, vec2(advance, height));
                 ic.line_display_list
-                    .push(PaintText(rect, font.clone(), word.to_string()));
+                    .push(Paint::Fill(rect, ic.style.get_background_color()));
+                ic.line_display_list.push(Paint::Text(
+                    rect,
+                    ic.style.get_color(),
+                    font.clone(),
+                    word.to_string(),
+                ));
                 ic.cursor.x += advance;
             }
             input = rest;
@@ -431,9 +466,28 @@ impl Layout {
     }
 
     fn flush(&self, dc: &mut DocumentContext, ic: &mut InlineContext) -> eyre::Result<()> {
-        for mut paint in ic.line_display_list.drain(..) {
-            *paint.0.top_mut() += ic.max_ascent - paint.1.ab.ascent() / dc.viewport.scale;
-            dc.display_list.push(paint);
+        for [mut fill, mut text] in ic.line_display_list.drain(..).array_chunks::<2>() {
+            let font = match &mut text {
+                Paint::Text(ref mut rect, _, font, _) => {
+                    *rect = rect.translate(vec2(
+                        0.0,
+                        ic.max_ascent - font.ab.ascent() / dc.viewport.scale,
+                    ));
+                    font
+                }
+                _ => todo!(),
+            };
+            match &mut fill {
+                Paint::Fill(ref mut rect, _) => {
+                    *rect = rect.translate(vec2(
+                        0.0,
+                        ic.max_ascent - font.ab.ascent() / dc.viewport.scale,
+                    ));
+                }
+                _ => todo!(),
+            }
+            dc.display_list.push(fill);
+            dc.display_list.push(text);
         }
 
         ic.cursor.x = self.read().rect.min.x;

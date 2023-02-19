@@ -2722,6 +2722,7 @@ dependencies = [
 name = "wbe-dom"
 version = "0.1.0"
 dependencies = [
+ "egui",
  "owning_ref",
  "tracing",
 ]

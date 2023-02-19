@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, RwLock, Weak},
 };
 
+use egui::Color32;
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 use tracing::{instrument, trace};
 
@@ -27,9 +28,46 @@ pub enum NodeType {
 #[derive(Debug, Clone)]
 pub enum NodeData {
     Document,
-    Element(String, Vec<(String, String)>),
+    Element(String, Vec<(String, String)>, Style),
     Text(String),
     Comment(String),
+}
+#[derive(Debug, Default, Clone)]
+pub struct Style {
+    pub background_color: Option<String>,
+    pub color: Option<String>,
+}
+fn get_color(color: &str) -> Color32 {
+    match color {
+        "transparent" => Color32::TRANSPARENT,
+        "blue" => Color32::BLUE,
+        "white" => Color32::WHITE,
+        "black" => Color32::BLACK,
+        "rgb(204,0,0)" => Color32::from_rgb(204, 0, 0),
+        "#FC0" => Color32::from_rgb(0xFF, 0xCC, 0x00),
+        _ => panic!(),
+    }
+}
+impl Style {
+    pub fn new_inherited(&self) -> Self {
+        Self {
+            color: self.color.clone(),
+            ..Default::default()
+        }
+    }
+    pub fn apply(&mut self, other: &Style) {
+        self.background_color = other
+            .background_color
+            .clone()
+            .or(self.background_color.clone());
+        self.color = other.color.clone().or(self.color.clone());
+    }
+    pub fn get_background_color(&self) -> Color32 {
+        get_color(self.background_color.as_deref().unwrap_or("transparent"))
+    }
+    pub fn get_color(&self) -> Color32 {
+        get_color(self.color.as_deref().unwrap_or("black"))
+    }
 }
 
 #[derive(Clone)]
@@ -55,7 +93,7 @@ impl Display for Node {
                 }
                 write!(f, "\x1B[1;36m)\x1B[0m")
             }
-            NodeData::Element(n, _) => {
+            NodeData::Element(n, _, _) => {
                 write!(f, "\x1B[1;36m{}(\x1B[0m", n)?;
                 for (i, child) in self.children().iter().enumerate() {
                     write!(f, "{}{}", if i > 0 { " " } else { "" }, child)?;
@@ -75,7 +113,7 @@ impl Display for NodeData {
         match self {
             NodeData::Document => write!(f, "\x1B[1;36m#document\x1B[0m"),
 
-            NodeData::Element(n, _) => write!(f, "\x1B[1;36m{}\x1B[0m", n),
+            NodeData::Element(n, _, _) => write!(f, "\x1B[1;36m{}\x1B[0m", n),
             NodeData::Text(x) => write!(f, "{:?}", x),
             NodeData::Comment(x) => write!(f, "\x1B[90m<!--{:?}-->\x1B[0m", x),
         }
@@ -96,7 +134,7 @@ impl Node {
     }
 
     pub fn element(name: impl ToOwned<Owned = String>, attrs: Vec<(String, String)>) -> Self {
-        Self::new(NodeData::Element(name.to_owned(), attrs))
+        Self::new(NodeData::Element(name.to_owned(), attrs, Style::default()))
     }
 
     pub fn text(value: impl ToOwned<Owned = String>) -> Self {
@@ -136,10 +174,14 @@ impl Node {
         self.read().map(|x| &x.inner)
     }
 
+    pub fn data_mut(&self) -> NodeWrite<NodeData> {
+        self.write().map_mut(|x| &mut x.inner)
+    }
+
     pub fn r#type(&self) -> NodeType {
         *self.read().map(|x| match &x.inner {
             NodeData::Document => &NodeType::Document,
-            NodeData::Element(_, _) => &NodeType::Element,
+            NodeData::Element(_, _, _) => &NodeType::Element,
             NodeData::Text(_) => &NodeType::Text,
             NodeData::Comment(_) => &NodeType::Comment,
         })
@@ -148,7 +190,7 @@ impl Node {
     pub fn name(&self) -> NodeRead<str> {
         self.read().map(|x| match &x.inner {
             NodeData::Document => "#document",
-            NodeData::Element(n, _) => &n,
+            NodeData::Element(n, _, _) => &n,
             NodeData::Text(_) => "#text",
             NodeData::Comment(_) => "#comment",
         })
@@ -158,7 +200,7 @@ impl Node {
         self.read()
             .try_map(|x| match &x.inner {
                 NodeData::Document => Err(()),
-                NodeData::Element(_, _) => Err(()),
+                NodeData::Element(_, _, _) => Err(()),
                 NodeData::Text(text) => Ok(&**text),
                 NodeData::Comment(text) => Ok(&**text),
             })
@@ -167,5 +209,25 @@ impl Node {
 
     pub fn children(&self) -> NodeRead<[Node]> {
         self.read().map(|x| &*x.children)
+    }
+}
+
+impl NodeData {
+    pub fn style(&self) -> Style {
+        match self {
+            NodeData::Document => Style::default(),
+            NodeData::Element(_, _, style) => style.clone(),
+            NodeData::Text(_) => Style::default(),
+            NodeData::Comment(_) => Style::default(),
+        }
+    }
+
+    pub fn set_style(&mut self, new_style: Style) {
+        match self {
+            NodeData::Document => panic!(),
+            NodeData::Element(_, _, style) => *style = new_style,
+            NodeData::Text(_) => panic!(),
+            NodeData::Comment(_) => panic!(),
+        }
     }
 }

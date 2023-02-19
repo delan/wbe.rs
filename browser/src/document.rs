@@ -11,6 +11,7 @@ use tracing::{debug, info, instrument};
 use wbe_core::dump_backtrace;
 use wbe_dom::{Node, NodeData, OwnedNode};
 use wbe_html_parser::parse_html;
+use wbe_layout::Paint;
 use wbe_layout::{viewport::ViewportInfo, Layout, OwnedLayout};
 
 #[derive(Default, Clone)]
@@ -166,14 +167,15 @@ impl OwnedDocument {
         for paint in &*layout.display_list() {
             let rect = paint.rect().translate(-scroll);
             if rect.intersects(viewport.rect) {
-                // painter.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::from_rgb(255, 0, 255)));
-                painter.text(
-                    rect.min,
-                    Align2::LEFT_TOP,
-                    paint.text(),
-                    paint.font().clone(),
-                    Color32::BLACK,
-                );
+                match paint {
+                    Paint::Text(_, color, font, text) => {
+                        // painter.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::from_rgb(255, 0, 255)));
+                        painter.text(rect.min, Align2::LEFT_TOP, text, font.egui.clone(), *color);
+                    }
+                    Paint::Fill(_, color) => {
+                        painter.rect(rect, 0.0, *color, (0.0, Color32::TRANSPARENT));
+                    }
+                }
             }
         }
     }
@@ -230,13 +232,13 @@ impl OwnedDocument {
             size_of_val(x)
                 - match x {
                     NodeData::Document => 0,
-                    NodeData::Element(n, a) => size_of_val(n) + size_of_val(a),
+                    NodeData::Element(n, a, _) => size_of_val(n) + size_of_val(a),
                     NodeData::Text(t) => size_of_val(t),
                     NodeData::Comment(t) => size_of_val(t),
                 }
                 + match x {
                     NodeData::Document => 0,
-                    NodeData::Element(n, a) => size_of_string(n) + size_of_vec(a),
+                    NodeData::Element(n, a, _) => size_of_string(n) + size_of_vec(a),
                     NodeData::Text(t) => size_of_string(t),
                     NodeData::Comment(t) => size_of_string(t),
                 }
