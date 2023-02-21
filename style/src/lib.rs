@@ -99,7 +99,7 @@ fn apply(
                     }
                     "padding" => {
                         if let Some(result) = CssQuad::parse_shorthand(value, CssLength::parse) {
-                            style.margin = Some(result);
+                            style.padding = Some(result);
                         }
                     }
                     "border" => {
