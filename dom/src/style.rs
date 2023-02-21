@@ -1,19 +1,28 @@
 use egui::Color32;
-use tracing::error;
+
+use wbe_core::FONT_SIZE;
 
 lazy_static::lazy_static! {
     pub static ref INITIAL_STYLE: Style = Style {
         display: Some("inline".to_owned()),
-        background_color: Some("transparent".to_owned()),
-        color: Some("black".to_owned()),
+        font_size: Some(FONT_SIZE),
+        font_weight: Some(CssFontWeight::Normal),
+        font_style: Some(CssFontStyle::Normal),
+        width: Some(CssWidth::Auto),
+        background_color: Some(Color32::TRANSPARENT),
+        color: Some(Color32::BLACK),
     };
 }
 
 #[derive(Debug, Clone)]
 pub struct Style {
     pub display: Option<String>,
-    pub background_color: Option<String>,
-    pub color: Option<String>,
+    pub font_size: Option<f32>,
+    pub font_weight: Option<CssFontWeight>,
+    pub font_style: Option<CssFontStyle>,
+    pub width: Option<CssWidth>,
+    pub background_color: Option<Color32>,
+    pub color: Option<Color32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -25,10 +34,39 @@ pub enum CssDisplay {
     ListItem,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CssFontWeight {
+    Normal,
+    Bold,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CssFontStyle {
+    Normal,
+    Italic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CssWidth {
+    Auto,
+    Length(CssLength),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CssLength {
+    Percent(f32),
+    Px(f32),
+    Em(f32),
+}
+
 impl Style {
     pub fn empty() -> Self {
         Self {
             display: None,
+            font_size: None,
+            font_weight: None,
+            font_style: None,
+            width: None,
             background_color: None,
             color: None,
         }
@@ -67,36 +105,46 @@ impl Style {
         }
     }
 
+    pub fn font_size(&self) -> f32 {
+        self.get(|s| s.font_size)
+    }
+
+    pub fn font_weight(&self) -> CssFontWeight {
+        self.get(|s| s.font_weight)
+    }
+
+    pub fn font_style(&self) -> CssFontStyle {
+        self.get(|s| s.font_style)
+    }
+
+    pub fn width(&self, percent_base: f32, em_base: f32) -> f32 {
+        resolve_width(self.get(|s| s.width), percent_base, em_base)
+    }
+
     pub fn background_color(&self) -> Color32 {
-        get_color(
-            self.background_color
-                .as_ref()
-                .unwrap_or_else(|| Self::initial().background_color.as_ref().unwrap()),
-        )
+        self.get(|s| s.background_color)
     }
 
     pub fn color(&self) -> Color32 {
-        get_color(
-            self.color
-                .as_ref()
-                .unwrap_or_else(|| Self::initial().color.as_ref().unwrap()),
-        )
+        self.get(|s| s.color)
+    }
+
+    fn get<T>(&self, getter: impl Fn(&Self) -> Option<T>) -> T {
+        getter(self).unwrap_or_else(|| getter(Self::initial()).unwrap())
     }
 }
 
-fn get_color(color: &str) -> Color32 {
-    match color {
-        "transparent" => Color32::TRANSPARENT,
-        "blue" => Color32::BLUE,
-        "white" => Color32::WHITE,
-        "black" => Color32::BLACK,
-        "rgb(204,0,0)" => Color32::from_rgb(204, 0, 0),
-        "#FC0" => Color32::from_rgb(0xFF, 0xCC, 0x00),
-        "#663399" => Color32::from_rgb(0x66, 0x33, 0x99),
-        "#008080" => Color32::from_rgb(0x00, 0x80, 0x80),
-        other => {
-            error!("unknown color {:?}", other);
-            Color32::TEMPORARY_COLOR
-        }
+pub fn resolve_length(value: CssLength, percent_base: f32, em_base: f32) -> f32 {
+    match value {
+        CssLength::Percent(x) => x / 100.0 * percent_base,
+        CssLength::Px(x) => x,
+        CssLength::Em(x) => x * em_base,
+    }
+}
+
+pub fn resolve_width(value: CssWidth, percent_base: f32, em_base: f32) -> f32 {
+    match value {
+        CssWidth::Auto => percent_base,
+        CssWidth::Length(x) => resolve_length(x, percent_base, em_base),
     }
 }

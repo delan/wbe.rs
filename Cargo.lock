@@ -2728,6 +2728,7 @@ dependencies = [
  "lazy_static",
  "owning_ref",
  "tracing",
+ "wbe-core",
 ]
 
 [[package]]
@@ -2782,6 +2783,7 @@ dependencies = [
 name = "wbe-style"
 version = "0.1.0"
 dependencies = [
+ "egui",
  "eyre",
  "tracing",
  "wbe-css-parser",

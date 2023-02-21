@@ -22,7 +22,10 @@ use tracing::{debug, instrument, trace, warn};
 use unicode_segmentation::UnicodeSegmentation;
 
 use wbe_core::{dump_backtrace, FONTS, FONT_SIZE, MARGIN};
-use wbe_dom::{style::CssDisplay, Node, NodeData, NodeType};
+use wbe_dom::{
+    style::{CssDisplay, CssFontStyle, CssFontWeight},
+    Node, NodeData, NodeType,
+};
 use wbe_html_lexer::{html_word, HtmlWord};
 
 const DISPLAY_NONE: &[&str] = &["#comment", "head", "title", "script", "style"];
@@ -87,11 +90,7 @@ struct DocumentContext<'v, 'p> {
 }
 
 #[derive(Debug, Clone)]
-struct BlockContext {
-    font_size: f32,
-    font_weight_bold: bool,
-    font_style_italic: bool,
-}
+struct BlockContext {}
 
 #[derive(Debug)]
 struct InlineContext {
@@ -230,11 +229,7 @@ impl Layout {
         let mut dc = DocumentContext {
             viewport,
             display_list: &mut display_list,
-            block: BlockContext {
-                font_size: FONT_SIZE,
-                font_weight_bold: false,
-                font_style_italic: false,
-            },
+            block: BlockContext {},
         };
 
         self.write().rect =
@@ -251,15 +246,6 @@ impl Layout {
 
         // save where we started, for background paint
         let i = dc.display_list.len();
-
-        let initial_rect = |previous: Option<Self>| {
-            let mut result = self.read().rect;
-            if let Some(previous) = previous {
-                result.set_top(previous.read().rect.bottom());
-            }
-            result.set_height(0.0);
-            result
-        };
 
         // boxes inside this box
         let mut boxes = vec![];
@@ -324,11 +310,25 @@ impl Layout {
 
         if !boxes.is_empty() {
             for layout in boxes {
+                let node = layout.node().map(|x| x.clone());
                 self.append(layout.clone());
                 let previous = layout.read().previous.upgrade().map(Self);
-                layout.write().rect = initial_rect(previous);
+                layout.write().rect = self.read().rect;
+                if let Some(previous) = previous {
+                    layout.write().rect.set_top(previous.read().rect.bottom());
+                }
+                if let Some(node) = node {
+                    let available = layout.read().rect.width();
+                    let font_size = node.data().style().font_size();
+                    debug!(width = ?node.data().style().width, available, font_size, node = %*node.data());
+                    layout
+                        .write()
+                        .rect
+                        .set_width(dbg!(node.data().style().width(available, font_size)));
+                }
+                layout.write().rect.set_height(0.0);
                 layout.f(dc)?;
-                self.write().rect.max = layout.read().rect.max;
+                self.write().rect.set_bottom(layout.read().rect.bottom());
                 trace!(rect = ?self.read().rect, extender = ?layout.read().rect);
             }
         } else if !self.inlines().is_empty() {
@@ -368,11 +368,9 @@ impl Layout {
         match node.r#type() {
             NodeType::Document => unreachable!(),
             NodeType::Element => {
-                self.open_tag(&node.name(), dc, ic);
                 for child in &*node.children() {
                     self.recurse(child.clone(), dc, ic)?;
                 }
-                self.close_tag(&node.name(), dc, ic);
             }
             NodeType::Text => {
                 self.text(node.clone(), dc, ic)?;
@@ -390,28 +388,26 @@ impl Layout {
         ic: &mut InlineContext,
     ) -> eyre::Result<()> {
         assert_eq!(node.r#type(), NodeType::Text);
+        let style = node.data().style();
         let font = FontInfo::new(
-            FontFamily::Name(
-                match (dc.block.font_weight_bold, dc.block.font_style_italic) {
-                    (false, false) => FONTS[0].0.into(),
-                    (true, false) => FONTS[1].0.into(),
-                    (false, true) => FONTS[2].0.into(),
-                    (true, true) => FONTS[3].0.into(),
-                },
-            ),
-            match (dc.block.font_weight_bold, dc.block.font_style_italic) {
-                (false, false) => FONTS[0].1,
-                (true, false) => FONTS[1].1,
-                (false, true) => FONTS[2].1,
-                (true, true) => FONTS[3].1,
+            FontFamily::Name(match (style.font_weight(), style.font_style()) {
+                (CssFontWeight::Normal, CssFontStyle::Normal) => FONTS[0].0.into(),
+                (CssFontWeight::Bold, CssFontStyle::Normal) => FONTS[1].0.into(),
+                (CssFontWeight::Normal, CssFontStyle::Italic) => FONTS[2].0.into(),
+                (CssFontWeight::Bold, CssFontStyle::Italic) => FONTS[3].0.into(),
+            }),
+            match (style.font_weight(), style.font_style()) {
+                (CssFontWeight::Normal, CssFontStyle::Normal) => FONTS[0].1,
+                (CssFontWeight::Bold, CssFontStyle::Normal) => FONTS[1].1,
+                (CssFontWeight::Normal, CssFontStyle::Italic) => FONTS[2].1,
+                (CssFontWeight::Bold, CssFontStyle::Italic) => FONTS[3].1,
             },
-            dc.block.font_size,
+            style.font_size(),
             dc.viewport.scale,
         )?;
         let rect = self.read().rect;
 
         let mut input = &*node.value().unwrap();
-        let style = node.data().style();
         while !input.is_empty() {
             let (rest, token) = match html_word(input) {
                 Ok(result) => result,
@@ -437,8 +433,6 @@ impl Layout {
                 ic.max_ascent = ic.max_ascent.max(ascent);
                 ic.max_height = ic.max_height.max(height);
                 let rect = Rect::from_min_size(ic.cursor, vec2(advance, height));
-                ic.line_display_list
-                    .push(Paint::Fill(rect, style.background_color()));
                 ic.line_display_list.push(Paint::Text(
                     rect,
                     style.color(),
@@ -455,27 +449,17 @@ impl Layout {
     }
 
     fn flush(&self, dc: &mut DocumentContext, ic: &mut InlineContext) -> eyre::Result<()> {
-        for [mut fill, mut text] in ic.line_display_list.drain(..).array_chunks::<2>() {
-            let font = match &mut text {
-                Paint::Text(ref mut rect, _, font, _) => {
-                    *rect = rect.translate(vec2(
-                        0.0,
-                        ic.max_ascent - font.ab.ascent() / dc.viewport.scale,
-                    ));
-                    font
-                }
-                _ => todo!(),
-            };
-            match &mut fill {
-                Paint::Fill(ref mut rect, _) => {
+        for mut text in ic.line_display_list.drain(..) {
+            match &mut text {
+                Paint::Text(rect, _, font, _) => {
                     *rect = rect.translate(vec2(
                         0.0,
                         ic.max_ascent - font.ab.ascent() / dc.viewport.scale,
                     ));
                 }
-                _ => todo!(),
+                _ => unreachable!(),
             }
-            dc.display_list.push(fill);
+
             dc.display_list.push(text);
         }
 
@@ -485,25 +469,5 @@ impl Layout {
         ic.max_height = 0.0;
 
         Ok(())
-    }
-
-    fn open_tag(&self, name: &str, dc: &mut DocumentContext, _ic: &mut InlineContext) {
-        match name {
-            "b" => dc.block.font_weight_bold = true,
-            "i" => dc.block.font_style_italic = true,
-            "big" => dc.block.font_size *= 1.5,
-            "small" => dc.block.font_size /= 1.5,
-            _ => {}
-        }
-    }
-
-    fn close_tag(&self, name: &str, dc: &mut DocumentContext, _ic: &mut InlineContext) {
-        match name {
-            "b" => dc.block.font_weight_bold = false,
-            "i" => dc.block.font_style_italic = false,
-            "big" => dc.block.font_size /= 1.5,
-            "small" => dc.block.font_size *= 1.5,
-            _ => {}
-        }
     }
 }

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+egui = "0.21.0"
 eyre = "0.6.8"
 tracing = "0.1.37"
 wbe-css-parser = { path = "../css-parser" }

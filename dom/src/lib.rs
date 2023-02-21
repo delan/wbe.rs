@@ -175,6 +175,29 @@ impl Node {
             .ok()
     }
 
+    pub fn attrs(&self) -> Option<NodeRead<[(String, String)]>> {
+        self.read()
+            .try_map(|x| match &x.inner {
+                NodeData::Element(_, attrs, _) => Ok(&**attrs),
+                _ => Err(()),
+            })
+            .ok()
+    }
+
+    pub fn attr(&self, name: &str) -> Option<NodeRead<String>> {
+        self.read()
+            .try_map(|x| match &x.inner {
+                NodeData::Element(_, attrs, _) => attrs
+                    .iter()
+                    .filter(|(n, _)| n == name)
+                    .map(|(_, v)| v)
+                    .next()
+                    .ok_or(()),
+                _ => Err(()),
+            })
+            .ok()
+    }
+
     pub fn text_content(&self) -> String {
         let mut result = String::new();
 
