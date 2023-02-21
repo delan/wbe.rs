@@ -512,7 +512,7 @@ impl Layout {
                 (CssFontWeight::Normal, CssFontStyle::Italic) => FONTS[2].1,
                 (CssFontWeight::Bold, CssFontStyle::Italic) => FONTS[3].1,
             },
-            dbg!(style.font_size()),
+            style.font_size(),
             dc.viewport.scale,
         )?;
         let rect = self.read().rect;

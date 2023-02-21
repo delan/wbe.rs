@@ -130,6 +130,16 @@ impl Node {
         self.read().parent.upgrade().map(Self)
     }
 
+    #[instrument(skip(self))]
+    pub fn walk_up(&self) -> impl Iterator<Item = Node> {
+        WalkUp(self.clone())
+    }
+
+    #[instrument(skip(self))]
+    pub fn walk_left(&self) -> impl Iterator<Item = Node> {
+        WalkLeft(self.clone())
+    }
+
     pub fn read(&self) -> NodeRead<OwnedNode> {
         NodeRead::new(self.0.read().unwrap())
     }
@@ -237,6 +247,12 @@ impl NodeData {
     }
 }
 
+impl PartialEq<Node> for Node {
+    fn eq(&self, other: &Node) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 struct NodeIterator(Vec<(Node, usize)>);
 impl Iterator for NodeIterator {
     type Item = Node;
@@ -260,6 +276,40 @@ impl Iterator for NodeIterator {
 
             // we’ve run out, pop back to parent
             self.0.pop();
+        }
+
+        None
+    }
+}
+
+struct WalkUp(Node);
+impl Iterator for WalkUp {
+    type Item = Node;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(result) = self.0.parent() {
+            self.0 = result.clone();
+            return Some(result);
+        }
+
+        None
+    }
+}
+
+struct WalkLeft(Node);
+impl Iterator for WalkLeft {
+    type Item = Node;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(parent) = self.0.parent() {
+            if let Some(index) = parent.children().iter().position(|x| *x == self.0) {
+                if let Some(index) = index.checked_sub(1) {
+                    if let Some(result) = parent.children().get(index) {
+                        self.0 = result.clone();
+                        return Some(result.clone());
+                    }
+                }
+            }
         }
 
         None

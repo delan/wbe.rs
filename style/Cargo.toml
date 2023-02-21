@@ -9,3 +9,6 @@ eyre = "0.6.8"
 tracing = "0.1.37"
 wbe-css-parser = { path = "../css-parser" }
 wbe-dom = { path = "../dom" }
+
+[dev-dependencies]
+wbe-html-parser = { path = "../html-parser" }

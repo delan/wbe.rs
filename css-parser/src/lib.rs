@@ -3,7 +3,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take, take_until, take_while, take_while1},
     character::complete::{alpha1, anychar, one_of, u8},
-    combinator::{fail, map, opt, peek, recognize},
+    combinator::{fail, map, opt, peek, recognize, success},
     multi::{count, many0, many1, many_till, separated_list0, separated_list1},
     number::complete::float,
     sequence::{preceded, separated_pair, terminated, tuple},
@@ -73,7 +73,7 @@ pub fn css_hash(input: &str) -> IResult<&str, &str> {
 #[rustfmt::skip]
 pub fn css_selector(input: &str) -> IResult<&str, &str> {
     alt((
-        css_ident,
+        alt((tag("*"), css_ident)),
         css_hash,
         recognize(tuple((tag("."), css_ident))),
     ))(input)
@@ -84,16 +84,33 @@ pub fn css_selector_compound(input: &str) -> IResult<&str, CompoundSelector> {
     many1(own(css_selector))(input)
 }
 
-pub fn css_selector_combinator(input: &str) -> IResult<&str, String> {
-    own(|i| alt((css_space, tag(">"), tag("+"), tag("~")))(i))(input)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Combinator {
+    Descendant,
+    Child,
+    NextSibling,
+    SubsequentSibling,
 }
 
-pub type ComplexSelector<'s> = (CompoundSelector<'s>, Vec<(String, CompoundSelector<'s>)>);
-pub fn css_selector_complex(input: &str) -> IResult<&str, ComplexSelector> {
-    tuple((
-        css_selector_compound,
-        many0(tuple((css_selector_combinator, css_selector_compound))),
+#[rustfmt::skip]
+pub fn css_selector_combinator(input: &str) -> IResult<&str, Combinator> {
+    alt((
+        map(css_space, |_| Combinator::Descendant),
+        map(tag(">"), |_| Combinator::Child),
+        map(tag("+"), |_| Combinator::NextSibling),
+        map(tag("~"), |_| Combinator::SubsequentSibling),
     ))(input)
+}
+
+pub type ComplexSelector<'s> = (
+    Vec<(CompoundSelector<'s>, Combinator)>,
+    CompoundSelector<'s>,
+);
+pub fn css_selector_complex(input: &str) -> IResult<&str, ComplexSelector> {
+    many_till(
+        tuple((css_selector_compound, css_selector_combinator)),
+        css_selector_compound,
+    )(input)
 }
 
 pub type SelectorList<'s> = Vec<ComplexSelector<'s>>;
@@ -209,10 +226,20 @@ fn test_css_file() {
     assert_eq!(css_ident("x{}"), Ok(("{}", "x")));
     assert_eq!(css_selector("x{}"), Ok(("{}", "x")));
     assert_eq!(css_selector_compound("x{}"), Ok(("{}", vec!["x".to_owned()])));
-    assert_eq!(css_selector_complex("x{}"), Ok(("{}", (vec!["x".to_owned()], vec![]))));
-    assert_eq!(css_selector_list("x{}"), Ok(("{}", vec![(vec!["x".to_owned()], vec![])])));
-    assert_eq!(css_rule("x{}"), Ok(("", (vec![(vec!["x".to_owned()], vec![])], vec![]))));
-    assert_eq!(css_file("x{}"), Ok(("", vec![(vec![(vec!["x".to_owned()], vec![])], vec![])])));
-    assert_eq!(css_file("*{}x{}"), Ok(("", vec![(vec![(vec!["x".to_owned()], vec![])], vec![])])));
+    assert_eq!(css_selector_compound("x.y#z{}"), Ok(("{}", vec!["x".to_owned(), ".y".to_owned(), "#z".to_owned()])));
+    assert_eq!(css_selector_complex("x{}"), Ok(("{}", (vec![], vec!["x".to_owned()]))));
+    assert_eq!(css_selector_complex("x.y#z a>b+c~d{}"), Ok(("{}", (
+        vec![
+            (vec!["x".to_owned(), ".y".to_owned(), "#z".to_owned()], Combinator::Descendant),
+            (vec!["a".to_owned()], Combinator::Child),
+            (vec!["b".to_owned()], Combinator::NextSibling),
+            (vec!["c".to_owned()], Combinator::SubsequentSibling),
+        ],
+        vec!["d".to_owned()],
+    ))));
+    assert_eq!(css_selector_list("x{}"), Ok(("{}", vec![(vec![], vec!["x".to_owned()])])));
+    assert_eq!(css_rule("x{}"), Ok(("", (vec![(vec![], vec!["x".to_owned()])], vec![]))));
+    assert_eq!(css_file("x{}"), Ok(("", vec![(vec![(vec![], vec!["x".to_owned()])], vec![])])));
+    assert_eq!(css_file("*{}x{}"), Ok(("", vec![(vec![(vec![], vec!["x".to_owned()])], vec![])])));
     assert_eq!(css_file(include_str!("../../browser/src/html.css")), Ok(("", vec![])));
 }

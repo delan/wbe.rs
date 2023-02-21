@@ -2790,6 +2790,7 @@ dependencies = [
  "tracing",
  "wbe-css-parser",
  "wbe-dom",
+ "wbe-html-parser",
 ]
 
 [[package]]
