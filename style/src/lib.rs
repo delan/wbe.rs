@@ -78,6 +78,14 @@ fn apply(
                 if !node.name().eq_ignore_ascii_case(&selector) {
                     continue;
                 }
+            } else if let Some(Ok(("", selector))) = selector.strip_prefix(".").map(css_ident) {
+                // check if the simple class selector matches
+                if node
+                    .attr("class")
+                    .map_or(true, |x| x.split_ascii_whitespace().all(|x| x != selector))
+                {
+                    continue;
+                }
             } else if let Ok(("", selector)) = css_hash(&selector) {
                 // check if the simple id selector matches
                 let id = selector.strip_prefix("#").unwrap();
