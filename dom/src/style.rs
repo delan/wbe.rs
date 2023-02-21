@@ -112,6 +112,9 @@ impl Style {
 
     pub fn new_inherited(&self) -> Self {
         Self {
+            font_size: self.font_size,
+            font_weight: self.font_weight,
+            font_style: self.font_style,
             color: self.color.clone(),
             ..Self::initial().clone()
         }
