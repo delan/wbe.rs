@@ -96,7 +96,7 @@ pub type SelectorList<'s> = Vec<ComplexSelector<'s>>;
 #[rustfmt::skip]
 pub fn css_selector_list(input: &str) -> IResult<&str, SelectorList> {
     separated_list1(
-        tuple((opt(css_space), tag(";"), opt(css_space))),
+        tuple((opt(css_space), tag(","), opt(css_space))),
         css_selector_complex,
     )(input)
 }
