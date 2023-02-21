@@ -1,10 +1,10 @@
 use egui::Color32;
 use eyre::eyre;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use wbe_css_parser::{css_file, css_hash, css_ident, RuleList};
 use wbe_dom::{
-    style::{resolve_length, CssFontStyle, CssFontWeight, CssLength, CssWidth},
+    style::{CssBorder, CssColor, CssFontStyle, CssFontWeight, CssLength, CssQuad, CssWidth},
     Node, NodeType, Style,
 };
 
@@ -34,22 +34,18 @@ pub fn resolve_styles(dom_tree: &Node, rules: &RuleList) -> eyre::Result<()> {
             NodeType::Element => {
                 // inherit only inherited properties
                 let mut style = node.parent().unwrap().data().style().new_inherited();
-                let parent_font_size = style.font_size.unwrap();
+                let parent_style = node.parent().unwrap().data().style();
 
-                // apply ‘font-size’ first
-                apply(
-                    &node,
-                    rules,
-                    &mut style,
-                    parent_font_size,
-                    Some("font-size"),
-                )?;
+                // apply ‘font-size’ and ‘color’ first
+                apply(&node, rules, &mut style, &parent_style, Some("font-size"))?;
+                apply(&node, rules, &mut style, &parent_style, Some("color"))?;
 
                 // then apply everything else
-                apply(&node, rules, &mut style, parent_font_size, None)?;
+                apply(&node, rules, &mut style, &parent_style, None)?;
 
                 // update style in element
-                debug!(node = %*node.data(), style = ?style);
+                info!(node = %*node.data(), %style);
+                debug!(?style);
                 node.data_mut().set_style(style);
             }
         }
@@ -62,7 +58,7 @@ fn apply(
     node: &Node,
     rules: &RuleList,
     style: &mut Style,
-    parent_font_size: f32,
+    parent_style: &Style,
     property: Option<&str>,
 ) -> eyre::Result<()> {
     assert_eq!(node.r#type(), NodeType::Element);
@@ -96,10 +92,27 @@ fn apply(
                 }
                 match &**name {
                     "display" => style.display = Some(value.to_owned()),
+                    "margin" => {
+                        if let Some(result) = CssQuad::parse_shorthand(value, CssLength::parse) {
+                            style.margin = Some(result);
+                        }
+                    }
+                    "padding" => {
+                        if let Some(result) = CssQuad::parse_shorthand(value, CssLength::parse) {
+                            style.margin = Some(result);
+                        }
+                    }
+                    "border" => {
+                        if let Some(result) = CssBorder::parse_shorthand(value) {
+                            style.border = Some(CssQuad::one(result));
+                        }
+                    }
                     "font-size" => {
-                        style.font_size = Some(parse_length(value).map_or(parent_font_size, |x| {
-                            resolve_length(x, parent_font_size, parent_font_size)
-                        }));
+                        style.font_size = Some(
+                            CssLength::parse(value).map_or(parent_style.font_size(), |x| {
+                                x.resolve(parent_style.font_size(), parent_style.font_size())
+                            }),
+                        );
                     }
                     "font-weight" => {
                         style.font_weight = match &**value {
@@ -118,14 +131,20 @@ fn apply(
                     "width" => {
                         style.width = match &**value {
                             "auto" => Some(CssWidth::Auto),
-                            other => parse_length(other).map(CssWidth::Length),
+                            other => CssLength::parse(other).map(CssWidth::Length),
                         }
                     }
                     "background-color" => {
-                        style.background_color = Some(parse_color(value));
+                        if let Some(result) = CssColor::parse(value) {
+                            // if ‘currentColor’, use self ‘color’
+                            style.background_color = Some(result);
+                        }
                     }
                     "color" => {
-                        style.color = Some(parse_color(value));
+                        if let Some(result) = CssColor::parse(value) {
+                            // if ‘currentColor’, use parent ‘color’
+                            style.color = Some(result.resolve(parent_style.color()));
+                        }
                     }
                     _ => {}
                 }
@@ -134,33 +153,4 @@ fn apply(
     }
 
     Ok(())
-}
-
-fn parse_color(color: &str) -> Color32 {
-    match color {
-        "transparent" => Color32::TRANSPARENT,
-        "blue" => Color32::BLUE,
-        "white" => Color32::WHITE,
-        "black" => Color32::BLACK,
-        "rgb(204,0,0)" => Color32::from_rgb(204, 0, 0),
-        "#FC0" => Color32::from_rgb(0xFF, 0xCC, 0x00),
-        "#663399" => Color32::from_rgb(0x66, 0x33, 0x99),
-        "#008080" => Color32::from_rgb(0x00, 0x80, 0x80),
-        other => {
-            error!("unknown color {:?}", other);
-            Color32::TEMPORARY_COLOR
-        }
-    }
-}
-
-pub fn parse_length(text: &str) -> Option<CssLength> {
-    if let Some(number) = text.strip_suffix("%") {
-        number.parse::<f32>().ok().map(CssLength::Percent)
-    } else if let Some(number) = text.strip_suffix("px") {
-        number.parse::<f32>().ok().map(CssLength::Px)
-    } else if let Some(number) = text.strip_suffix("em") {
-        number.parse::<f32>().ok().map(CssLength::Em)
-    } else {
-        None
-    }
 }

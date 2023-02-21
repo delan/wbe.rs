@@ -6,6 +6,10 @@ html, body, article, section, nav, aside, h1, h2, h3, h4, h5, h6, hgroup, header
     display: block;
 }
 
+body {
+    margin: 1em;
+}
+
 h1 { font-weight: bold; font-size: 2em; }
 h2 { font-weight: bold; font-size: 1.5em; }
 h3 { font-weight: bold; font-size: 1.25em; }

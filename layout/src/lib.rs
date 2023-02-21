@@ -23,7 +23,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use wbe_core::{dump_backtrace, FONTS, FONT_SIZE, MARGIN};
 use wbe_dom::{
-    style::{CssDisplay, CssFontStyle, CssFontWeight},
+    style::{CssDisplay, CssFontStyle, CssFontWeight, CssQuad},
     Node, NodeData, NodeType,
 };
 use wbe_html_lexer::{html_word, HtmlWord};
@@ -81,6 +81,10 @@ pub struct OwnedLayout {
     pub children: Vec<Layout>,
     pub display_list: Vec<Paint>,
     pub rect: Rect,
+
+    margin: CssQuad<f32>,
+    border: CssQuad<f32>,
+    padding: CssQuad<f32>,
 }
 
 struct DocumentContext<'v, 'p> {
@@ -131,10 +135,17 @@ impl Layout {
             children: vec![],
             display_list: vec![],
             rect: Rect::NAN,
+
+            margin: CssQuad::one(0.0),
+            border: CssQuad::one(0.0),
+            padding: CssQuad::one(0.0),
         })))
     }
 
-    pub fn with_node(node: Node) -> Self {
+    pub fn with_node(node: Node, available: f32) -> Self {
+        let style = node.data().style();
+        let font_size = style.font_size();
+
         Self(Arc::new(RwLock::new(OwnedLayout {
             node: Some(node),
             inlines: vec![],
@@ -143,6 +154,16 @@ impl Layout {
             children: vec![],
             display_list: vec![],
             rect: Rect::NAN,
+
+            margin: style
+                .margin()
+                .flat_map(|x| Some(x.resolve(available, font_size))),
+            border: style
+                .border_width()
+                .flat_map(|x| x.resolve_no_percent(font_size)),
+            padding: style
+                .padding()
+                .flat_map(|x| Some(x.resolve(available, font_size))),
         })))
     }
 
@@ -221,6 +242,7 @@ impl Layout {
         self.read().map(|x| &*x.display_list)
     }
 
+    #[instrument(skip(viewport))]
     pub fn layout(&self, viewport: &ViewportInfo) -> eyre::Result<()> {
         assert_eq!(self.inlines().len(), 0);
         assert_eq!(self.node().unwrap().r#type(), NodeType::Document);
@@ -240,12 +262,35 @@ impl Layout {
         Ok(())
     }
 
-    #[instrument(skip(dc))]
     fn f(&self, dc: &mut DocumentContext) -> eyre::Result<()> {
         // trace!(mode = ?self.mode(), node = %*self.node().data());
 
         // save where we started, for background paint
         let i = dc.display_list.len();
+
+        let (mut margin_rect, mut padding_rect, mut border_rect, mut content_rect) =
+            if let Some(node) = self.node() {
+                let mut rect = self.read().rect;
+                let margin_rect = rect;
+                rect.set_top(rect.top() + self.read().margin.top().unwrap());
+                rect.set_left(rect.left() + self.read().margin.left().unwrap());
+                rect.set_right(rect.right() - self.read().margin.right().unwrap());
+                let border_rect = rect;
+                rect.set_top(rect.top() + self.read().border.top().unwrap());
+                rect.set_left(rect.left() + self.read().border.left().unwrap());
+                rect.set_right(rect.right() - self.read().border.right().unwrap());
+                let padding_rect = rect;
+                rect.set_top(rect.top() + self.read().padding.top().unwrap());
+                rect.set_left(rect.left() + self.read().padding.left().unwrap());
+                rect.set_right(rect.right() - self.read().padding.right().unwrap());
+                let content_rect = rect;
+
+                (margin_rect, padding_rect, border_rect, content_rect)
+            } else {
+                let rect = self.read().rect;
+
+                (rect, rect, rect, rect)
+            };
 
         // boxes inside this box
         let mut boxes = vec![];
@@ -266,15 +311,15 @@ impl Layout {
             if Self::is_block_level(&child) {
                 if !inlines.is_empty() {
                     let layout = Self::anonymous(inlines.drain(..));
-                    debug!(box_child = %*child.data(), before = ?layout);
+                    trace!(box_child = %*child.data(), before = ?layout);
                     boxes.push(layout);
                 } else {
-                    debug!(box_child = %*child.data());
+                    trace!(box_child = %*child.data());
                 }
-                let layout = Self::with_node(child);
+                let layout = Self::with_node(child, self.read().rect.width());
                 boxes.push(layout);
             } else if !Self::is_skippable(&child) {
-                debug!(line_child = %*child.data());
+                trace!(line_child = %*child.data());
                 inlines.push(child);
             }
         }
@@ -313,27 +358,37 @@ impl Layout {
                 let node = layout.node().map(|x| x.clone());
                 self.append(layout.clone());
                 let previous = layout.read().previous.upgrade().map(Self);
-                layout.write().rect = self.read().rect;
+                layout.write().rect = content_rect;
                 if let Some(previous) = previous {
                     layout.write().rect.set_top(previous.read().rect.bottom());
                 }
                 if let Some(node) = node {
                     let available = layout.read().rect.width();
-                    let font_size = node.data().style().font_size();
-                    debug!(width = ?node.data().style().width, available, font_size, node = %*node.data());
+                    let margin_left = layout.read().margin.left();
+                    let border_left = layout.read().border.left();
+                    let padding_left = layout.read().padding.left();
+                    let padding_right = layout.read().padding.right();
+                    let border_right = layout.read().border.right();
+                    let margin_right = layout.read().margin.right();
+                    debug!(
+                        node = %*node.data(),
+                        width = ?node.data().style().width,
+                        available,
+                        mbppbm = ?(margin_left, border_left, padding_left, padding_right, border_right, margin_right),
+                    );
                     layout
                         .write()
                         .rect
-                        .set_width(dbg!(node.data().style().width(available, font_size)));
+                        .set_width(node.data().style().box_width(available));
                 }
                 layout.write().rect.set_height(0.0);
                 layout.f(dc)?;
-                self.write().rect.set_bottom(layout.read().rect.bottom());
+                content_rect.set_bottom(layout.read().rect.bottom());
                 trace!(rect = ?self.read().rect, extender = ?layout.read().rect);
             }
         } else if !self.inlines().is_empty() {
             let mut ic = InlineContext {
-                cursor: self.read().rect.min,
+                cursor: content_rect.min,
                 max_ascent: 0.0,
                 max_height: 0.0,
                 line_display_list: vec![],
@@ -344,14 +399,69 @@ impl Layout {
             for node in nodes {
                 self.recurse(node.clone(), dc, &mut ic)?;
                 self.flush(dc, &mut ic)?;
-                self.write().rect.set_bottom(ic.cursor.y);
+                content_rect.set_bottom(ic.cursor.y);
             }
         }
 
+        padding_rect.set_bottom(content_rect.bottom() + self.read().padding.bottom().unwrap());
+        border_rect.set_bottom(padding_rect.bottom() + self.read().border.bottom().unwrap());
+        margin_rect.set_bottom(border_rect.bottom() + self.read().margin.bottom().unwrap());
+        self.write().rect.set_bottom(margin_rect.bottom());
+
         if let Some(node) = self.node() {
+            let style = node.data().style();
+            let current_color = style.color();
             dc.display_list.insert(
                 i,
-                Paint::Fill(self.read().rect, node.data().style().background_color()),
+                Paint::Fill(
+                    padding_rect,
+                    style.background_color().resolve(current_color),
+                ),
+            );
+
+            let border_top_rect = Rect::from_x_y_ranges(
+                border_rect.min.x..=border_rect.max.x,
+                border_rect.min.y..=padding_rect.min.y,
+            );
+            let border_bottom_rect = Rect::from_x_y_ranges(
+                border_rect.min.x..=border_rect.max.x,
+                padding_rect.max.y..=border_rect.max.y,
+            );
+            let border_left_rect = Rect::from_x_y_ranges(
+                border_rect.min.x..=padding_rect.min.x,
+                border_rect.min.y..=border_rect.max.y,
+            );
+            let border_right_rect = Rect::from_x_y_ranges(
+                padding_rect.max.x..=border_rect.max.x,
+                border_rect.min.y..=border_rect.max.y,
+            );
+            dc.display_list.insert(
+                i,
+                Paint::Fill(
+                    border_top_rect,
+                    style.border_top_color().resolve(current_color),
+                ),
+            );
+            dc.display_list.insert(
+                i,
+                Paint::Fill(
+                    border_right_rect,
+                    style.border_right_color().resolve(current_color),
+                ),
+            );
+            dc.display_list.insert(
+                i,
+                Paint::Fill(
+                    border_bottom_rect,
+                    style.border_bottom_color().resolve(current_color),
+                ),
+            );
+            dc.display_list.insert(
+                i,
+                Paint::Fill(
+                    border_left_rect,
+                    style.border_left_color().resolve(current_color),
+                ),
             );
         }
 

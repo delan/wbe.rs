@@ -161,7 +161,7 @@ impl OwnedDocument {
         response_body: String,
         dom: Node,
     ) -> eyre::Result<OwnedDocument> {
-        let layout = Layout::with_node(dom.clone());
+        let layout = Layout::with_node(dom.clone(), viewport.rect.width());
         layout.layout(&viewport)?;
 
         Ok(OwnedDocument::LaidOut {
