@@ -51,10 +51,10 @@ pub enum CssLength {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CssQuad<T: Debug + Clone + Copy + PartialEq> {
-    top: Option<T>,
-    right: Option<T>,
-    bottom: Option<T>,
-    left: Option<T>,
+    pub top: Option<T>,
+    pub right: Option<T>,
+    pub bottom: Option<T>,
+    pub left: Option<T>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -420,9 +420,7 @@ impl<T: Debug + Clone + Copy + PartialEq> CssQuad<T> {
             self.left.map(&f).flatten(),
         )
     }
-}
 
-impl<T: Debug + Clone + Copy + PartialEq> CssQuad<T> {
     pub fn parse_shorthand(value: &str, parser: impl Fn(&str) -> Option<T>) -> Option<Self> {
         let value = value.split_ascii_whitespace().collect::<Vec<_>>();
         let result = match value[..] {
@@ -446,6 +444,17 @@ impl<T: Debug + Clone + Copy + PartialEq> CssQuad<T> {
         }
 
         Some(self)
+    }
+}
+
+impl<T: Debug + Copy + Clone + PartialEq> Default for CssQuad<T> {
+    fn default() -> Self {
+        Self {
+            top: None,
+            right: None,
+            bottom: None,
+            left: None,
+        }
     }
 }
 

@@ -44,14 +44,25 @@ pub fn resolve_styles(dom_tree: &Node, rules: &RuleList) -> eyre::Result<()> {
                 apply(&node, rules, &mut style, &parent_style, None)?;
 
                 // update style in element
-                info!(node = %*node.data(), %style);
-                debug!(?style);
+                trace!(?style);
                 node.data_mut().set_style(style);
             }
         }
     }
 
     Ok(())
+}
+
+macro_rules! trbl {
+    ($style:ident, $node:ident, $name:ident, $value:ident, $field:ident, $side:ident, $parse:expr) => {{
+        if let Some(result) = $parse {
+            let mut property = $style.$field.unwrap_or_default();
+            property.$side = Some(result);
+            $style.$field = Some(property);
+            debug!($node = %*$node.data(), $name, $value);
+            continue;
+        }
+    }};
 }
 
 fn apply(
@@ -72,21 +83,79 @@ fn apply(
                     continue;
                 }
                 match &**name {
-                    "display" => style.display = Some(value.to_owned()),
+                    "display" => {
+                        style.display = Some(value.to_owned());
+                        debug!(node = %*node.data(), name, value);
+                        continue;
+                    }
                     "margin" => {
                         if let Some(result) = CssQuad::parse_shorthand(value, CssLength::parse) {
                             style.margin = Some(result);
+                            debug!(node = %*node.data(), name, value);
+                            continue;
                         }
+                    }
+                    "margin-top" => {
+                        #[rustfmt::skip]
+                        trbl!(style, node, name, value, margin, top, CssLength::parse(value));
+                    }
+                    "margin-right" => {
+                        #[rustfmt::skip]
+                        trbl!(style, node, name, value, margin, right, CssLength::parse(value));
+                    }
+                    "margin-bottom" => {
+                        #[rustfmt::skip]
+                        trbl!(style, node, name, value, margin, bottom, CssLength::parse(value));
+                    }
+                    "margin-left" => {
+                        #[rustfmt::skip]
+                        trbl!(style, node, name, value, margin, left, CssLength::parse(value));
                     }
                     "padding" => {
                         if let Some(result) = CssQuad::parse_shorthand(value, CssLength::parse) {
                             style.padding = Some(result);
+                            debug!(node = %*node.data(), name, value);
+                            continue;
                         }
+                    }
+                    "padding-top" => {
+                        #[rustfmt::skip]
+                        trbl!(style, node, name, value, padding, top, CssLength::parse(value));
+                    }
+                    "padding-right" => {
+                        #[rustfmt::skip]
+                        trbl!(style, node, name, value, padding, right, CssLength::parse(value));
+                    }
+                    "padding-bottom" => {
+                        #[rustfmt::skip]
+                        trbl!(style, node, name, value, padding, bottom, CssLength::parse(value));
+                    }
+                    "padding-left" => {
+                        #[rustfmt::skip]
+                        trbl!(style, node, name, value, padding, left, CssLength::parse(value));
                     }
                     "border" => {
                         if let Some(result) = CssBorder::parse_shorthand(value) {
                             style.border = Some(CssQuad::one(result));
+                            debug!(node = %*node.data(), name, value);
+                            continue;
                         }
+                    }
+                    "border-top" => {
+                        #[rustfmt::skip]
+                        trbl!(style, node, name, value, border, top, CssBorder::parse_shorthand(value));
+                    }
+                    "border-right" => {
+                        #[rustfmt::skip]
+                        trbl!(style, node, name, value, border, right, CssBorder::parse_shorthand(value));
+                    }
+                    "border-bottom" => {
+                        #[rustfmt::skip]
+                        trbl!(style, node, name, value, border, bottom, CssBorder::parse_shorthand(value));
+                    }
+                    "border-left" => {
+                        #[rustfmt::skip]
+                        trbl!(style, node, name, value, border, left, CssBorder::parse_shorthand(value));
                     }
                     "font-size" => {
                         style.font_size = Some(
@@ -94,41 +163,51 @@ fn apply(
                                 x.resolve(parent_style.font_size(), parent_style.font_size())
                             }),
                         );
+                        continue;
                     }
                     "font-weight" => {
                         style.font_weight = match &**value {
                             "normal" => Some(CssFontWeight::Normal),
                             "bold" => Some(CssFontWeight::Bold),
                             _ => style.font_weight,
-                        }
+                        };
+                        continue;
                     }
                     "font-style" => {
                         style.font_style = match &**value {
                             "normal" => Some(CssFontStyle::Normal),
                             "italic" => Some(CssFontStyle::Italic),
                             _ => style.font_style,
-                        }
+                        };
+                        continue;
                     }
                     "width" => {
                         style.width = match &**value {
                             "auto" => Some(CssWidth::Auto),
                             other => CssLength::parse(other).map(CssWidth::Length),
-                        }
+                        };
+                        continue;
                     }
                     "background-color" => {
                         if let Some(result) = CssColor::parse(value) {
                             // if ‘currentColor’, use self ‘color’
                             style.background_color = Some(result);
+                            continue;
                         }
                     }
                     "color" => {
                         if let Some(result) = CssColor::parse(value) {
                             // if ‘currentColor’, use parent ‘color’
                             style.color = Some(result.resolve(parent_style.color()));
+                            continue;
                         }
                     }
-                    _ => {}
+                    other => {
+                        warn!(node = %*node.data(), "unknown property {:?}", other);
+                        continue;
+                    }
                 }
+                warn!(node = %*node.data(), "invalid value for property {}: {:?}", name, value);
             }
         }
     }
