@@ -1,44 +1,66 @@
-use tracing::{error, trace, warn};
-use wbe_css_parser::{css_file, css_ident};
-use wbe_dom::Node;
+use eyre::eyre;
+use tracing::{trace, warn};
+use wbe_css_parser::{css_file, css_ident, RuleList};
+use wbe_dom::{Node, NodeType};
 
-pub fn resolve_styles(css_text: &str, dom_tree: &Node) -> eyre::Result<()> {
-    let rules = match css_file(css_text) {
-        Ok(("", result)) => result,
+pub fn parse_css_file(text: &str) -> eyre::Result<RuleList> {
+    match css_file(text) {
+        Ok(("", result)) => Ok(result),
         Ok((rest, result)) => {
             warn!("trailing text in css file: {:?}", rest);
-            result
+            Ok(result)
         }
-        Err(error) => {
-            error!(?error);
-            return Ok(()); // TODO
-        }
-    };
-    for (selectors, declarations) in rules {
-        for (selector, combinators) in selectors {
-            if !combinators.is_empty() {
-                continue; // TODO
+        Err(error) => Err(eyre!("failed to parse css file: {:?}", error)),
+    }
+}
+
+pub fn resolve_styles(dom_tree: &Node, rules: &RuleList) -> eyre::Result<()> {
+    for node in dom_tree.descendants() {
+        match node.r#type() {
+            NodeType::Document => unreachable!(),
+            NodeType::Comment => {
+                // do nothing
             }
-            if selector.len() != 1 {
-                continue; // TODO
+            NodeType::Text => {
+                // inherit everything from element or #document
+                let style = node.parent().unwrap().data().style();
+                node.data_mut().set_style(style);
             }
-            let selector = selector[0];
-            if css_ident(selector).is_err() {
-                continue; // TODO
-            }
-            for node in dom_tree
-                .descendants()
-                .filter(|x| x.name().eq_ignore_ascii_case(selector))
-            {
-                trace!(selector, node = %*node.data());
-                let mut style = node.data().style();
-                for &(name, value) in &declarations {
-                    match name {
-                        "background-color" => style.background_color = Some(value.to_owned()),
-                        "color" => style.color = Some(value.to_owned()),
-                        _ => {}
+            NodeType::Element => {
+                // inherit only inherited properties
+                let mut style = node.parent().unwrap().data().style().new_inherited();
+
+                // apply matching rules in file order (TODO cascade)
+                for (selectors, declarations) in rules {
+                    for (base, combinators) in selectors {
+                        if !combinators.is_empty() {
+                            continue; // TODO
+                        }
+                        if base.len() != 1 {
+                            continue; // TODO
+                        }
+                        let selector = &base[0];
+                        if css_ident(&selector).is_err() {
+                            continue; // TODO
+                        }
+                        // check if the simple type selector matches
+                        if !node.name().eq_ignore_ascii_case(&selector) {
+                            continue;
+                        }
+                        trace!(selector, node = %*node.data());
+                        for (name, value) in declarations {
+                            match &**name {
+                                "background-color" => {
+                                    style.background_color = Some(value.to_owned())
+                                }
+                                "color" => style.color = Some(value.to_owned()),
+                                _ => {}
+                            }
+                        }
                     }
                 }
+
+                // update style in element
                 node.data_mut().set_style(style);
             }
         }

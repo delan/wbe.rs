@@ -6,15 +6,14 @@ use std::{fmt::Debug, mem::swap, str};
 use backtrace::Backtrace;
 use egui::{Align2, Color32, Ui, Vec2};
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{debug, info, instrument, warn};
 
 use wbe_core::dump_backtrace;
-use wbe_css_parser::{css_file, css_ident};
 use wbe_dom::{Node, NodeData, OwnedNode};
 use wbe_html_parser::parse_html;
 use wbe_layout::Paint;
 use wbe_layout::{viewport::ViewportInfo, Layout, OwnedLayout};
-use wbe_style::resolve_styles;
+use wbe_style::{parse_css_file, resolve_styles};
 
 #[derive(Default, Clone)]
 pub struct Document(Arc<RwLock<OwnedDocument>>);
@@ -137,13 +136,16 @@ impl OwnedDocument {
         let dom = parse_html(&response_body)?;
         debug!(%dom);
 
-        // ua styles
-        resolve_styles(include_str!("html.css"), &dom)?;
+        // start with ua styles
+        let mut css_rules = parse_css_file(include_str!("html.css"))?;
 
+        // then add author styles
         for node in dom.descendants().filter(|x| &*x.name() == "style") {
-            let css_text = node.text_content();
-            resolve_styles(&css_text, &dom)?;
+            css_rules.append(&mut parse_css_file(&node.text_content())?);
         }
+
+        // now resolve in pre-order traversal
+        resolve_styles(&dom, &css_rules)?;
 
         Ok(OwnedDocument::Parsed {
             location,
@@ -243,13 +245,13 @@ impl OwnedDocument {
                 - match x {
                     NodeData::Document => 0,
                     NodeData::Element(n, a, _) => size_of_val(n) + size_of_val(a),
-                    NodeData::Text(t) => size_of_val(t),
+                    NodeData::Text(t, _) => size_of_val(t),
                     NodeData::Comment(t) => size_of_val(t),
                 }
                 + match x {
                     NodeData::Document => 0,
                     NodeData::Element(n, a, _) => size_of_string(n) + size_of_vec(a),
-                    NodeData::Text(t) => size_of_string(t),
+                    NodeData::Text(t, _) => size_of_string(t),
                     NodeData::Comment(t) => size_of_string(t),
                 }
         }

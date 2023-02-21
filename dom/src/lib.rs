@@ -29,7 +29,7 @@ pub enum NodeType {
 pub enum NodeData {
     Document,
     Element(String, Vec<(String, String)>, Style),
-    Text(String),
+    Text(String, Style),
     Comment(String),
 }
 #[derive(Debug, Default, Clone)]
@@ -109,7 +109,7 @@ impl Display for Node {
                 write!(f, "\x1B[1;36m)\x1B[0m")
             }
             // NodeData::Text(x) => write!(f, "#text({:?})", x),
-            NodeData::Text(x) => write!(f, "{:?}", x),
+            NodeData::Text(x, _) => write!(f, "{:?}", x),
             // NodeData::Comment(x) => write!(f, "#comment({:?})", x),
             NodeData::Comment(x) => write!(f, "\x1B[90m<!--{:?}-->\x1B[0m", x),
         }
@@ -122,7 +122,7 @@ impl Display for NodeData {
             NodeData::Document => write!(f, "\x1B[1;36m#document\x1B[0m"),
 
             NodeData::Element(n, _, _) => write!(f, "\x1B[1;36m{}\x1B[0m", n),
-            NodeData::Text(x) => write!(f, "{:?}", x),
+            NodeData::Text(x, _) => write!(f, "{:?}", x),
             NodeData::Comment(x) => write!(f, "\x1B[90m<!--{:?}-->\x1B[0m", x),
         }
     }
@@ -146,7 +146,7 @@ impl Node {
     }
 
     pub fn text(value: impl ToOwned<Owned = String>) -> Self {
-        Self::new(NodeData::Text(value.to_owned()))
+        Self::new(NodeData::Text(value.to_owned(), Style::default()))
     }
 
     pub fn comment(value: impl ToOwned<Owned = String>) -> Self {
@@ -190,7 +190,7 @@ impl Node {
         *self.read().map(|x| match &x.inner {
             NodeData::Document => &NodeType::Document,
             NodeData::Element(_, _, _) => &NodeType::Element,
-            NodeData::Text(_) => &NodeType::Text,
+            NodeData::Text(_, _) => &NodeType::Text,
             NodeData::Comment(_) => &NodeType::Comment,
         })
     }
@@ -199,7 +199,7 @@ impl Node {
         self.read().map(|x| match &x.inner {
             NodeData::Document => "#document",
             NodeData::Element(n, _, _) => &n,
-            NodeData::Text(_) => "#text",
+            NodeData::Text(_, _) => "#text",
             NodeData::Comment(_) => "#comment",
         })
     }
@@ -209,7 +209,7 @@ impl Node {
             .try_map(|x| match &x.inner {
                 NodeData::Document => Err(()),
                 NodeData::Element(_, _, _) => Err(()),
-                NodeData::Text(text) => Ok(&**text),
+                NodeData::Text(text, _) => Ok(&**text),
                 NodeData::Comment(text) => Ok(&**text),
             })
             .ok()
@@ -239,7 +239,7 @@ impl NodeData {
         match self {
             NodeData::Document => Style::default(),
             NodeData::Element(_, _, style) => style.clone(),
-            NodeData::Text(_) => Style::default(),
+            NodeData::Text(_, style) => style.clone(),
             NodeData::Comment(_) => Style::default(),
         }
     }
@@ -248,7 +248,7 @@ impl NodeData {
         match self {
             NodeData::Document => panic!(),
             NodeData::Element(_, _, style) => *style = new_style,
-            NodeData::Text(_) => panic!(),
+            NodeData::Text(_, style) => *style = new_style,
             NodeData::Comment(_) => panic!(),
         }
     }

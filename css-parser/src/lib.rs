@@ -2,11 +2,17 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take, take_until, take_while, take_while1},
     character::complete::{alpha1, anychar, one_of},
-    combinator::{fail, opt, peek, recognize},
+    combinator::{fail, map, opt, peek, recognize},
     multi::{many0, many1, many_till, separated_list0, separated_list1},
     sequence::{preceded, separated_pair, terminated, tuple},
     IResult, Parser,
 };
+
+pub fn own<'i>(
+    parse: impl FnMut(&'i str) -> IResult<&str, &str> + Copy,
+) -> impl FnMut(&'i str) -> IResult<&str, String> + Copy {
+    move |input| map(parse, |x| x.to_owned())(input)
+}
 
 pub fn one(input: &str, pred: impl Fn(char) -> bool) -> IResult<&str, &str> {
     let (rest, result) = take(1usize)(input)?;
@@ -69,16 +75,16 @@ pub fn css_selector(input: &str) -> IResult<&str, &str> {
     ))(input)
 }
 
-pub type CompoundSelector<'s> = Vec<&'s str>;
+pub type CompoundSelector<'s> = Vec<String>;
 pub fn css_selector_compound(input: &str) -> IResult<&str, CompoundSelector> {
-    many1(css_selector)(input)
+    many1(own(css_selector))(input)
 }
 
-pub fn css_selector_combinator(input: &str) -> IResult<&str, &str> {
-    alt((css_space, tag(">"), tag("+"), tag("~")))(input)
+pub fn css_selector_combinator(input: &str) -> IResult<&str, String> {
+    own(|i| alt((css_space, tag(">"), tag("+"), tag("~")))(i))(input)
 }
 
-pub type ComplexSelector<'s> = (CompoundSelector<'s>, Vec<(&'s str, CompoundSelector<'s>)>);
+pub type ComplexSelector<'s> = (CompoundSelector<'s>, Vec<(String, CompoundSelector<'s>)>);
 pub fn css_selector_complex(input: &str) -> IResult<&str, ComplexSelector> {
     tuple((
         css_selector_compound,
@@ -95,7 +101,7 @@ pub fn css_selector_list(input: &str) -> IResult<&str, SelectorList> {
     )(input)
 }
 
-pub type Declaration<'s> = (&'s str, &'s str);
+pub type Declaration<'s> = (String, String);
 pub type DeclarationList<'s> = Vec<Declaration<'s>>;
 pub type Rule<'s> = (SelectorList<'s>, DeclarationList<'s>);
 #[rustfmt::skip]
@@ -110,10 +116,10 @@ pub fn css_rule(input: &str) -> IResult<&str, (SelectorList, DeclarationList)> {
             // https://github.com/rust-lang/rust/issues/68307
             css_big_token(move |i| tag(";")(i)),
             separated_pair(
-                css_big_token(css_ident),
+                own(css_big_token(css_ident)),
                 css_big_token(move |i| tag(":")(i)),
-                recognize(many_till(anychar, tuple((opt(css_space), peek(one_of(";}"))))),
-            )),
+                own(|i| recognize(many_till(anychar, tuple((opt(css_space), peek(one_of(";}"))))))(i)),
+            ),
         ),
         many0(alt((tag(";"), css_space))),
         tag("}"),
@@ -128,7 +134,7 @@ pub fn css_comment(input: &str) -> IResult<&str, &str> {
 
 #[rustfmt::skip]
 // the Copy is because of https://github.com/rust-bakery/nom/issues/1044
-pub fn css_big_token<'i, O: 'i>(parse: impl FnMut(&'i str) -> IResult<&str, O> + Copy) -> impl FnMut(&'i str) -> IResult<&str, O> {
+pub fn css_big_token<'i, O: 'i>(parse: impl FnMut(&'i str) -> IResult<&str, O> + Copy) -> impl FnMut(&'i str) -> IResult<&str, O> + Copy {
     move |input| terminated(
         preceded(
             tuple((opt(css_space), opt(css_comment), opt(css_space))),
