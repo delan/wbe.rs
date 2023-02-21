@@ -154,14 +154,14 @@ impl OwnedDocument {
         })
     }
 
-    #[instrument(skip(response_body, dom))]
+    #[instrument(skip(viewport, location, response_body, dom))]
     fn layout(
         viewport: ViewportInfo,
         location: String,
         response_body: String,
         dom: Node,
     ) -> eyre::Result<OwnedDocument> {
-        let layout = Layout::document(dom.clone());
+        let layout = Layout::with_node(dom.clone());
         layout.layout(&viewport)?;
 
         Ok(OwnedDocument::LaidOut {

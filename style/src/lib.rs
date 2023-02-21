@@ -1,5 +1,5 @@
 use eyre::eyre;
-use tracing::{trace, warn};
+use tracing::{debug, trace, warn};
 use wbe_css_parser::{css_file, css_ident, RuleList};
 use wbe_dom::{Node, NodeType};
 
@@ -50,6 +50,7 @@ pub fn resolve_styles(dom_tree: &Node, rules: &RuleList) -> eyre::Result<()> {
                         trace!(selector, node = %*node.data());
                         for (name, value) in declarations {
                             match &**name {
+                                "display" => style.display = Some(value.to_owned()),
                                 "background-color" => {
                                     style.background_color = Some(value.to_owned())
                                 }
@@ -61,6 +62,7 @@ pub fn resolve_styles(dom_tree: &Node, rules: &RuleList) -> eyre::Result<()> {
                 }
 
                 // update style in element
+                debug!(node = %*node.data(), style = ?style);
                 node.data_mut().set_style(style);
             }
         }

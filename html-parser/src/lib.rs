@@ -110,6 +110,9 @@ pub fn parse_html(response_body: &str) -> eyre::Result<Node> {
             HtmlToken::Text(text) => {
                 parent.append(&[Node::text(text.to_owned())]);
             }
+            HtmlToken::Doctype(_) => {
+                // TODO
+            }
         }
         input = rest;
     }

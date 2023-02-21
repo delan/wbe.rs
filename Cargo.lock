@@ -2725,6 +2725,7 @@ name = "wbe-dom"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "lazy_static",
  "owning_ref",
  "tracing",
 ]

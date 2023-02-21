@@ -182,5 +182,5 @@ fn test_css_file() {
     assert_eq!(css_rule("x{}"), Ok(("", (vec![(vec!["x"], vec![])], vec![]))));
     assert_eq!(css_file("x{}"), Ok(("", vec![(vec![(vec!["x"], vec![])], vec![])])));
     assert_eq!(css_file("*{}x{}"), Ok(("", vec![(vec![(vec!["x"], vec![])], vec![])])));
-    assert_eq!(css_file("\n* {\n    box-sizing: border-box;\n}\nheader, nav, footer {\n    display: block;\n}\nhtml"), Ok(("", vec![])));
+    assert_eq!(css_file(include_str!("../../browser/src/html.css")), Ok(("", vec![])));
 }

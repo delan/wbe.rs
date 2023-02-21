@@ -102,11 +102,11 @@ impl Node {
     }
 
     pub fn element(name: impl ToOwned<Owned = String>, attrs: Vec<(String, String)>) -> Self {
-        Self::new(NodeData::Element(name.to_owned(), attrs, Style::default()))
+        Self::new(NodeData::Element(name.to_owned(), attrs, Style::empty()))
     }
 
     pub fn text(value: impl ToOwned<Owned = String>) -> Self {
-        Self::new(NodeData::Text(value.to_owned(), Style::default()))
+        Self::new(NodeData::Text(value.to_owned(), Style::empty()))
     }
 
     pub fn comment(value: impl ToOwned<Owned = String>) -> Self {
@@ -197,10 +197,10 @@ impl Node {
 impl NodeData {
     pub fn style(&self) -> Style {
         match self {
-            NodeData::Document => Style::default(),
+            NodeData::Document => Style::empty(),
             NodeData::Element(_, _, style) => style.clone(),
             NodeData::Text(_, style) => style.clone(),
-            NodeData::Comment(_) => Style::default(),
+            NodeData::Comment(_) => Style::empty(),
         }
     }
 
