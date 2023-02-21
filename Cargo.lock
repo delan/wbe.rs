@@ -2780,6 +2780,12 @@ dependencies = [
 [[package]]
 name = "wbe-style"
 version = "0.1.0"
+dependencies = [
+ "eyre",
+ "tracing",
+ "wbe-css-parser",
+ "wbe-dom",
+]
 
 [[package]]
 name = "web-sys"
