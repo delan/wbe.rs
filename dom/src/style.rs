@@ -2,8 +2,9 @@ use std::fmt::{Debug, Display};
 
 use egui::Color32;
 
-use tracing::error;
+use tracing::{error, warn};
 use wbe_core::FONT_SIZE;
+use wbe_css_parser::color_numeric;
 
 lazy_static::lazy_static! {
     pub static ref INITIAL_STYLE: Style = Style {
@@ -267,26 +268,52 @@ impl Style {
 
 impl CssColor {
     pub fn parse(value: &str) -> Option<CssColor> {
+        fn rgba(rgba32: u32) -> Color32 {
+            Color32::from_rgba_unmultiplied(
+                (rgba32 >> 24) as _,
+                (rgba32 >> 16 & 255) as _,
+                (rgba32 >> 8 & 255) as _,
+                (rgba32 & 255) as _,
+            )
+        }
+
         if value.eq_ignore_ascii_case("currentcolor") {
             return Some(CssColor::CurrentColor);
         }
 
         Some(CssColor::Other(match value {
-            "transparent" => Color32::TRANSPARENT,
-            "white" => Color32::WHITE,
-            "black" => Color32::BLACK,
-            "red" => Color32::RED,        // impl defined in CSS1
-            "green" => Color32::GREEN,    // impl defined in CSS1
-            "blue" => Color32::BLUE,      // impl defined in CSS1
-            "yellow" => Color32::YELLOW,  // impl defined in CSS1
-            "navy" => Color32::DARK_BLUE, // impl defined in CSS1
-            "rgb(204,0,0)" => Color32::from_rgb(204, 0, 0),
-            "#FC0" => Color32::from_rgb(0xFF, 0xCC, 0x00),
-            "#663399" => Color32::from_rgb(0x66, 0x33, 0x99),
-            "#008080" => Color32::from_rgb(0x00, 0x80, 0x80),
+            // impl defined in CSS1, defined in CSS2
+            x if x.eq_ignore_ascii_case("maroon") => rgba(0x800000ff),
+            x if x.eq_ignore_ascii_case("red") => rgba(0xff0000ff),
+            x if x.eq_ignore_ascii_case("yellow") => rgba(0xffff00ff),
+            x if x.eq_ignore_ascii_case("olive") => rgba(0x808000ff),
+            x if x.eq_ignore_ascii_case("purple") => rgba(0x800080ff),
+            x if x.eq_ignore_ascii_case("fuchsia") => rgba(0xff00ffff),
+            x if x.eq_ignore_ascii_case("white") => rgba(0xffffffff),
+            x if x.eq_ignore_ascii_case("lime") => rgba(0x00ff00ff),
+            x if x.eq_ignore_ascii_case("green") => rgba(0x008000ff),
+            x if x.eq_ignore_ascii_case("navy") => rgba(0x000080ff),
+            x if x.eq_ignore_ascii_case("blue") => rgba(0x0000ffff),
+            x if x.eq_ignore_ascii_case("aqua") => rgba(0x00ffffff),
+            x if x.eq_ignore_ascii_case("teal") => rgba(0x008080ff),
+            x if x.eq_ignore_ascii_case("black") => rgba(0x000000ff),
+            x if x.eq_ignore_ascii_case("silver") => rgba(0xc0c0c0ff),
+            x if x.eq_ignore_ascii_case("gray") => rgba(0x808080ff),
+
+            // not defined in CSS1, defined in CSS2
+            x if x.eq_ignore_ascii_case("orange") => rgba(0xffA50000),
+
+            // defined after CSS2
+            x if x.eq_ignore_ascii_case("transparent") => rgba(0x00000000),
+            x if x.eq_ignore_ascii_case("rebeccapurple") => rgba(0x663399FF),
+
             other => {
-                error!("unknown color {:?}", other);
-                Color32::from_rgb(255, 0, 255)
+                if let Ok(("", result)) = color_numeric(other) {
+                    result
+                } else {
+                    warn!("unknown color {:?}", other);
+                    return None;
+                }
             }
         }))
     }

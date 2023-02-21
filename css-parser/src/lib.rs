@@ -1,9 +1,11 @@
+use egui::Color32;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take, take_until, take_while, take_while1},
-    character::complete::{alpha1, anychar, one_of},
+    character::complete::{alpha1, anychar, one_of, u8},
     combinator::{fail, map, opt, peek, recognize},
-    multi::{many0, many1, many_till, separated_list0, separated_list1},
+    multi::{count, many0, many1, many_till, separated_list0, separated_list1},
+    number::complete::float,
     sequence::{preceded, separated_pair, terminated, tuple},
     IResult, Parser,
 };
@@ -14,12 +16,14 @@ pub fn own<'i>(
     move |input| map(parse, |x| x.to_owned())(input)
 }
 
-pub fn one(input: &str, pred: impl Fn(char) -> bool) -> IResult<&str, &str> {
-    let (rest, result) = take(1usize)(input)?;
-    if pred(result.chars().next().unwrap()) {
-        Ok((rest, result))
-    } else {
-        fail(input)
+pub fn one<'i>(pred: impl Fn(char) -> bool) -> impl FnMut(&'i str) -> IResult<&str, &str> {
+    move |input| {
+        let (rest, result) = take(1usize)(input)?;
+        if pred(result.chars().next().unwrap()) {
+            Ok((rest, result))
+        } else {
+            fail(input)
+        }
     }
 }
 
@@ -144,6 +148,10 @@ pub fn css_big_token<'i, O: 'i>(parse: impl FnMut(&'i str) -> IResult<&str, O> +
     )(input)
 }
 
+pub fn stag(x: &'static str) -> impl FnMut(&str) -> IResult<&str, &str> {
+    move |input| css_big_token(move |i| tag(x)(i))(input)
+}
+
 fn rule_with_bad_selector(input: &str) -> IResult<&str, &str> {
     recognize(tuple((take_until("}"), tag("}"))))(input)
 }
@@ -171,16 +179,40 @@ pub fn css_file(input: &str) -> IResult<&str, RuleList> {
     Ok((input, result))
 }
 
+#[rustfmt::skip]
+pub fn color_numeric(input: &str) -> IResult<&str, Color32> {
+    let d8 = |input| map(tuple((float, opt(tag("%")))),
+                         |(x,p)| (x / if p.is_some() { 255.0 / 100.0 } else { 1.0 }) as u8)(input);
+    let h8 = |input| map(recognize(count(one(|x| x.is_ascii_hexdigit()), 2)),
+                         |x| u8::from_str_radix(x,16).unwrap())(input);
+    let h4 = |input| map(recognize(count(one(|x| x.is_ascii_hexdigit()), 1)),
+                         |x| u8::from_str_radix(x,16).unwrap())(input);
+
+    let (rest, (r, g, b, a)) = alt((
+        map(tuple((tag("rgb"), opt(tag("a")), tag("("), d8, stag(","), d8, stag(","), d8, opt(preceded(stag(","), d8)), stag(")"))),
+            |(_,_,_,r,_,g,_,b,a,_)| (r,g,b,a.unwrap_or(255))),
+        map(tuple((tag("#"), h8, h8, h8, opt(h8))), |(_,r,g,b,a)| (r,g,b,a.unwrap_or(255))),
+        map(tuple((tag("#"), h4, h4, h4, opt(h4))), |(_,r,g,b,a)| (17*r,17*g,17*b,17*a.unwrap_or(15))),
+    ))(input)?;
+
+    Ok((rest, Color32::from_rgba_unmultiplied(r, g, b, a)))
+}
+
 #[test]
 #[rustfmt::skip]
 fn test_css_file() {
+    assert_eq!(color_numeric("#a0B1c2D3"), Ok(("", Color32::from_rgba_unmultiplied(0xA0, 0xB1, 0xC2, 0xD3))));
+    assert_eq!(color_numeric("#A0b1C2"), Ok(("", Color32::from_rgba_unmultiplied(0xA0, 0xB1, 0xC2, 0xFF))));
+    assert_eq!(color_numeric("#aBcD"), Ok(("", Color32::from_rgba_unmultiplied(0xAA, 0xBB, 0xCC, 0xDD))));
+    assert_eq!(color_numeric("#AbC"), Ok(("", Color32::from_rgba_unmultiplied(0xAA, 0xBB, 0xCC, 0xFF))));
+
     assert_eq!(css_ident("x{}"), Ok(("{}", "x")));
     assert_eq!(css_selector("x{}"), Ok(("{}", "x")));
-    assert_eq!(css_selector_compound("x{}"), Ok(("{}", vec!["x"])));
-    assert_eq!(css_selector_complex("x{}"), Ok(("{}", (vec!["x"], vec![]))));
-    assert_eq!(css_selector_list("x{}"), Ok(("{}", vec![(vec!["x"], vec![])])));
-    assert_eq!(css_rule("x{}"), Ok(("", (vec![(vec!["x"], vec![])], vec![]))));
-    assert_eq!(css_file("x{}"), Ok(("", vec![(vec![(vec!["x"], vec![])], vec![])])));
-    assert_eq!(css_file("*{}x{}"), Ok(("", vec![(vec![(vec!["x"], vec![])], vec![])])));
+    assert_eq!(css_selector_compound("x{}"), Ok(("{}", vec!["x".to_owned()])));
+    assert_eq!(css_selector_complex("x{}"), Ok(("{}", (vec!["x".to_owned()], vec![]))));
+    assert_eq!(css_selector_list("x{}"), Ok(("{}", vec![(vec!["x".to_owned()], vec![])])));
+    assert_eq!(css_rule("x{}"), Ok(("", (vec![(vec!["x".to_owned()], vec![])], vec![]))));
+    assert_eq!(css_file("x{}"), Ok(("", vec![(vec![(vec!["x".to_owned()], vec![])], vec![])])));
+    assert_eq!(css_file("*{}x{}"), Ok(("", vec![(vec![(vec!["x".to_owned()], vec![])], vec![])])));
     assert_eq!(css_file(include_str!("../../browser/src/html.css")), Ok(("", vec![])));
 }

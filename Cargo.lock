@@ -2717,6 +2717,7 @@ dependencies = [
 name = "wbe-css-parser"
 version = "0.1.0"
 dependencies = [
+ "egui",
  "nom",
 ]
 
@@ -2729,6 +2730,7 @@ dependencies = [
  "owning_ref",
  "tracing",
  "wbe-core",
+ "wbe-css-parser",
 ]
 
 [[package]]
