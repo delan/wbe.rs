@@ -6,12 +6,14 @@ use std::{fmt::Debug, mem::swap, str};
 use backtrace::Backtrace;
 use egui::{Align2, Color32, Ui, Vec2};
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, instrument, warn};
 
 use wbe_core::dump_backtrace;
 use wbe_dom::{Node, NodeData, OwnedNode};
 use wbe_html_parser::parse_html;
+use wbe_layout::Paint;
 use wbe_layout::{viewport::ViewportInfo, Layout, OwnedLayout};
+use wbe_style::{parse_css_file, resolve_styles};
 
 #[derive(Default, Clone)]
 pub struct Document(Arc<RwLock<OwnedDocument>>);
@@ -134,6 +136,17 @@ impl OwnedDocument {
         let dom = parse_html(&response_body)?;
         debug!(%dom);
 
+        // start with ua styles
+        let mut css_rules = parse_css_file(include_str!("html.css"))?;
+
+        // then add author styles
+        for node in dom.descendants().filter(|x| &*x.name() == "style") {
+            css_rules.append(&mut parse_css_file(&node.text_content())?);
+        }
+
+        // now resolve in pre-order traversal
+        resolve_styles(&dom, &css_rules)?;
+
         Ok(OwnedDocument::Parsed {
             location,
             response_body,
@@ -141,14 +154,14 @@ impl OwnedDocument {
         })
     }
 
-    #[instrument(skip(response_body, dom))]
+    #[instrument(skip(viewport, location, response_body, dom))]
     fn layout(
         viewport: ViewportInfo,
         location: String,
         response_body: String,
         dom: Node,
     ) -> eyre::Result<OwnedDocument> {
-        let layout = Layout::document(dom.clone());
+        let layout = Layout::with_node(dom.clone(), viewport.rect.width());
         layout.layout(&viewport)?;
 
         Ok(OwnedDocument::LaidOut {
@@ -166,14 +179,15 @@ impl OwnedDocument {
         for paint in &*layout.display_list() {
             let rect = paint.rect().translate(-scroll);
             if rect.intersects(viewport.rect) {
-                // painter.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::from_rgb(255, 0, 255)));
-                painter.text(
-                    rect.min,
-                    Align2::LEFT_TOP,
-                    paint.text(),
-                    paint.font().clone(),
-                    Color32::BLACK,
-                );
+                match paint {
+                    Paint::Text(_, color, font, text) => {
+                        // painter.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::from_rgb(255, 0, 255)));
+                        painter.text(rect.min, Align2::LEFT_TOP, text, font.egui.clone(), *color);
+                    }
+                    Paint::Fill(_, color) => {
+                        painter.rect(rect, 0.0, *color, (0.0, Color32::TRANSPARENT));
+                    }
+                }
             }
         }
     }
@@ -230,14 +244,14 @@ impl OwnedDocument {
             size_of_val(x)
                 - match x {
                     NodeData::Document => 0,
-                    NodeData::Element(n, a) => size_of_val(n) + size_of_val(a),
-                    NodeData::Text(t) => size_of_val(t),
+                    NodeData::Element(n, a, _) => size_of_val(n) + size_of_val(a),
+                    NodeData::Text(t, _) => size_of_val(t),
                     NodeData::Comment(t) => size_of_val(t),
                 }
                 + match x {
                     NodeData::Document => 0,
-                    NodeData::Element(n, a) => size_of_string(n) + size_of_vec(a),
-                    NodeData::Text(t) => size_of_string(t),
+                    NodeData::Element(n, a, _) => size_of_string(n) + size_of_vec(a),
+                    NodeData::Text(t, _) => size_of_string(t),
                     NodeData::Comment(t) => size_of_string(t),
                 }
         }

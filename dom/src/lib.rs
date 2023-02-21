@@ -1,10 +1,14 @@
+pub mod style;
+
+pub use crate::style::Style;
+
 use std::{
     fmt::{Debug, Display},
     sync::{Arc, RwLock, Weak},
 };
 
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
-use tracing::{instrument, trace};
+use tracing::{instrument, trace, warn};
 
 pub type NodeRead<'n, T> = RwLockReadGuardRef<'n, OwnedNode, T>;
 pub type NodeWrite<'n, T> = RwLockWriteGuardRefMut<'n, OwnedNode, T>;
@@ -27,8 +31,8 @@ pub enum NodeType {
 #[derive(Debug, Clone)]
 pub enum NodeData {
     Document,
-    Element(String, Vec<(String, String)>),
-    Text(String),
+    Element(String, Vec<(String, String)>, Style),
+    Text(String, Style),
     Comment(String),
 }
 
@@ -57,7 +61,7 @@ impl Display for Node {
                 }
                 write!(f, "\x1B[1;36m)\x1B[0m")
             }
-            NodeData::Element(n, _) => {
+            NodeData::Element(n, _, _) => {
                 write!(f, "\x1B[1;36m{}(\x1B[0m", n)?;
                 for (i, child) in self.children().iter().enumerate() {
                     write!(f, "{}{}", if i > 0 { " " } else { "" }, child)?;
@@ -65,7 +69,7 @@ impl Display for Node {
                 write!(f, "\x1B[1;36m)\x1B[0m")
             }
             // NodeData::Text(x) => write!(f, "#text({:?})", x),
-            NodeData::Text(x) => write!(f, "{:?}", x),
+            NodeData::Text(x, _) => write!(f, "{:?}", x),
             // NodeData::Comment(x) => write!(f, "#comment({:?})", x),
             NodeData::Comment(x) => write!(f, "\x1B[90m<!--{:?}-->\x1B[0m", x),
         }
@@ -77,8 +81,8 @@ impl Display for NodeData {
         match self {
             NodeData::Document => write!(f, "\x1B[1;36m#document\x1B[0m"),
 
-            NodeData::Element(n, _) => write!(f, "\x1B[1;36m{}\x1B[0m", n),
-            NodeData::Text(x) => write!(f, "{:?}", x),
+            NodeData::Element(n, _, _) => write!(f, "\x1B[1;36m{}\x1B[0m", n),
+            NodeData::Text(x, _) => write!(f, "{:?}", x),
             NodeData::Comment(x) => write!(f, "\x1B[90m<!--{:?}-->\x1B[0m", x),
         }
     }
@@ -98,11 +102,11 @@ impl Node {
     }
 
     pub fn element(name: impl ToOwned<Owned = String>, attrs: Vec<(String, String)>) -> Self {
-        Self::new(NodeData::Element(name.to_owned(), attrs))
+        Self::new(NodeData::Element(name.to_owned(), attrs, Style::empty()))
     }
 
     pub fn text(value: impl ToOwned<Owned = String>) -> Self {
-        Self::new(NodeData::Text(value.to_owned()))
+        Self::new(NodeData::Text(value.to_owned(), Style::empty()))
     }
 
     pub fn comment(value: impl ToOwned<Owned = String>) -> Self {
@@ -126,6 +130,16 @@ impl Node {
         self.read().parent.upgrade().map(Self)
     }
 
+    #[instrument(skip(self))]
+    pub fn walk_up(&self) -> impl Iterator<Item = Node> {
+        WalkUp(self.clone())
+    }
+
+    #[instrument(skip(self))]
+    pub fn walk_left(&self) -> impl Iterator<Item = Node> {
+        WalkLeft(self.clone())
+    }
+
     pub fn read(&self) -> NodeRead<OwnedNode> {
         NodeRead::new(self.0.read().unwrap())
     }
@@ -138,11 +152,15 @@ impl Node {
         self.read().map(|x| &x.inner)
     }
 
+    pub fn data_mut(&self) -> NodeWrite<NodeData> {
+        self.write().map_mut(|x| &mut x.inner)
+    }
+
     pub fn r#type(&self) -> NodeType {
         *self.read().map(|x| match &x.inner {
             NodeData::Document => &NodeType::Document,
-            NodeData::Element(_, _) => &NodeType::Element,
-            NodeData::Text(_) => &NodeType::Text,
+            NodeData::Element(_, _, _) => &NodeType::Element,
+            NodeData::Text(_, _) => &NodeType::Text,
             NodeData::Comment(_) => &NodeType::Comment,
         })
     }
@@ -150,8 +168,8 @@ impl Node {
     pub fn name(&self) -> NodeRead<str> {
         self.read().map(|x| match &x.inner {
             NodeData::Document => "#document",
-            NodeData::Element(n, _) => &n,
-            NodeData::Text(_) => "#text",
+            NodeData::Element(n, _, _) => &n,
+            NodeData::Text(_, _) => "#text",
             NodeData::Comment(_) => "#comment",
         })
     }
@@ -160,14 +178,140 @@ impl Node {
         self.read()
             .try_map(|x| match &x.inner {
                 NodeData::Document => Err(()),
-                NodeData::Element(_, _) => Err(()),
-                NodeData::Text(text) => Ok(&**text),
+                NodeData::Element(_, _, _) => Err(()),
+                NodeData::Text(text, _) => Ok(&**text),
                 NodeData::Comment(text) => Ok(&**text),
             })
             .ok()
     }
 
+    pub fn attrs(&self) -> Option<NodeRead<[(String, String)]>> {
+        self.read()
+            .try_map(|x| match &x.inner {
+                NodeData::Element(_, attrs, _) => Ok(&**attrs),
+                _ => Err(()),
+            })
+            .ok()
+    }
+
+    pub fn attr(&self, name: &str) -> Option<NodeRead<String>> {
+        self.read()
+            .try_map(|x| match &x.inner {
+                NodeData::Element(_, attrs, _) => attrs
+                    .iter()
+                    .filter(|(n, _)| n == name)
+                    .map(|(_, v)| v)
+                    .next()
+                    .ok_or(()),
+                _ => Err(()),
+            })
+            .ok()
+    }
+
+    pub fn text_content(&self) -> String {
+        let mut result = String::new();
+
+        for node in self.descendants().filter(|x| x.r#type() == NodeType::Text) {
+            result += &*node.value().unwrap();
+        }
+
+        result
+    }
+
     pub fn children(&self) -> NodeRead<[Node]> {
         self.read().map(|x| &*x.children)
+    }
+
+    pub fn descendants(&self) -> impl Iterator<Item = Node> {
+        NodeIterator(vec![(self.clone(), 0)])
+    }
+}
+
+impl NodeData {
+    pub fn style(&self) -> Style {
+        match self {
+            NodeData::Document => Style::empty(),
+            NodeData::Element(_, _, style) => style.clone(),
+            NodeData::Text(_, style) => style.clone(),
+            NodeData::Comment(_) => Style::empty(),
+        }
+    }
+
+    pub fn set_style(&mut self, new_style: Style) {
+        match self {
+            NodeData::Document => panic!(),
+            NodeData::Element(_, _, style) => *style = new_style,
+            NodeData::Text(_, style) => *style = new_style,
+            NodeData::Comment(_) => panic!(),
+        }
+    }
+}
+
+impl PartialEq<Node> for Node {
+    fn eq(&self, other: &Node) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+struct NodeIterator(Vec<(Node, usize)>);
+impl Iterator for NodeIterator {
+    type Item = Node;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // e.g. (#document, 2), (html, 1), (head, 0)
+        while let Some((node, i)) = self.0.last_mut() {
+            // if head has a children[0]
+            if *i < node.children().len() {
+                // this time, return head.children[0]
+                let result = node.children()[*i].clone();
+
+                // next time, try head.children[1]
+                *i += 1;
+
+                // but actually, next time, try head.children[0].children[0]
+                self.0.push((result.clone(), 0));
+
+                return Some(result);
+            }
+
+            // we’ve run out, pop back to parent
+            self.0.pop();
+        }
+
+        None
+    }
+}
+
+struct WalkUp(Node);
+impl Iterator for WalkUp {
+    type Item = Node;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(result) = self.0.parent() {
+            self.0 = result.clone();
+            return Some(result);
+        }
+
+        None
+    }
+}
+
+struct WalkLeft(Node);
+impl Iterator for WalkLeft {
+    type Item = Node;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(parent) = self.0.parent() {
+            if let Some(index) = parent.children().iter().position(|x| *x == self.0) {
+                if let Some(index) = index.checked_sub(1) {
+                    if let Some(result) = parent.children().get(index) {
+                        self.0 = result.clone();
+                        return Some(result.clone());
+                    }
+                }
+            }
+        }
+
+        None
     }
 }

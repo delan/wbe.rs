@@ -10,7 +10,9 @@ eyre = "0.6.8"
 owning_ref = "0.4.1"
 tracing = "0.1.37"
 wbe-core = { path = "../core" }
+wbe-css-parser = { path = "../css-parser" }
 wbe-dom = { path = "../dom" }
 wbe-html-parser = { path = "../html-parser" }
 wbe-http = { path = "../http" }
 wbe-layout = { path = "../layout" }
+wbe-style = { path = "../style" }

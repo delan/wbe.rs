@@ -1,22 +1,20 @@
-use std::{fmt::Debug, str};
+use std::fmt::Debug;
 
-use egui::{FontId, Rect};
+use egui::{Color32, Rect};
 
 use crate::*;
 
 #[derive(Debug, Clone)]
-pub struct PaintText(pub Rect, pub font::FontInfo, pub String);
+pub enum Paint {
+    Text(Rect, Color32, font::FontInfo, String),
+    Fill(Rect, Color32),
+}
 
-impl PaintText {
+impl Paint {
     pub fn rect(&self) -> &Rect {
-        &self.0
-    }
-
-    pub fn font(&self) -> &FontId {
-        &self.1.egui
-    }
-
-    pub fn text(&self) -> &str {
-        &self.2
+        match self {
+            Paint::Text(rect, _, _, _) => rect,
+            Paint::Fill(rect, _) => rect,
+        }
     }
 }

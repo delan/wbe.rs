@@ -1,0 +1,8 @@
+[package]
+name = "wbe-css-parser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+egui = "0.21.0"
+nom = "7.1.3"

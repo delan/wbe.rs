@@ -2678,6 +2678,7 @@ dependencies = [
  "tracing-subscriber",
  "wbe-browser",
  "wbe-core",
+ "wbe-css-parser",
  "wbe-dom",
  "wbe-html-lexer",
  "wbe-html-parser",
@@ -2695,10 +2696,12 @@ dependencies = [
  "owning_ref",
  "tracing",
  "wbe-core",
+ "wbe-css-parser",
  "wbe-dom",
  "wbe-html-parser",
  "wbe-http",
  "wbe-layout",
+ "wbe-style",
 ]
 
 [[package]]
@@ -2711,11 +2714,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "wbe-css-parser"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "nom",
+]
+
+[[package]]
 name = "wbe-dom"
 version = "0.1.0"
 dependencies = [
+ "egui",
+ "lazy_static",
  "owning_ref",
  "tracing",
+ "wbe-core",
+ "wbe-css-parser",
 ]
 
 [[package]]
@@ -2735,6 +2750,7 @@ version = "0.1.0"
 dependencies = [
  "eyre",
  "tracing",
+ "wbe-css-parser",
  "wbe-dom",
  "wbe-html-lexer",
 ]
@@ -2763,6 +2779,18 @@ dependencies = [
  "wbe-core",
  "wbe-dom",
  "wbe-html-lexer",
+]
+
+[[package]]
+name = "wbe-style"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "eyre",
+ "tracing",
+ "wbe-css-parser",
+ "wbe-dom",
+ "wbe-html-parser",
 ]
 
 [[package]]

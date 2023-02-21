@@ -1,8 +1,12 @@
+#![feature(array_chunks)]
+#![feature(iter_array_chunks)]
+#![feature(stmt_expr_attributes)]
+
 pub mod font;
 pub mod paint;
 pub mod viewport;
 
-pub use crate::{font::FontInfo, paint::PaintText, viewport::ViewportInfo};
+pub use crate::{font::FontInfo, paint::Paint, viewport::ViewportInfo};
 
 use std::{
     fmt::Debug,
@@ -11,14 +15,17 @@ use std::{
 
 use ab_glyph::ScaleFont;
 use backtrace::Backtrace;
-use egui::{vec2, FontFamily, Pos2, Rect};
+use egui::{vec2, Color32, FontFamily, Pos2, Rect};
 use eyre::bail;
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
-use tracing::{debug, trace};
+use tracing::{debug, instrument, trace, warn};
 use unicode_segmentation::UnicodeSegmentation;
 
 use wbe_core::{dump_backtrace, FONTS, FONT_SIZE, MARGIN};
-use wbe_dom::{Node, NodeData, NodeType};
+use wbe_dom::{
+    style::{CssDisplay, CssFontStyle, CssFontWeight, CssQuad},
+    Node, NodeData, NodeType,
+};
 use wbe_html_lexer::{html_word, HtmlWord};
 
 const DISPLAY_NONE: &[&str] = &["#comment", "head", "title", "script", "style"];
@@ -67,41 +74,34 @@ pub type LayoutWrite<'n, T> = RwLockWriteGuardRefMut<'n, OwnedLayout, T>;
 
 #[derive(Debug)]
 pub struct OwnedLayout {
-    pub node: Node,
+    pub node: Option<Node>,
+    pub inlines: Vec<Node>,
     pub parent: Weak<RwLock<OwnedLayout>>,
     pub previous: Weak<RwLock<OwnedLayout>>,
     pub children: Vec<Layout>,
-    pub mode: LayoutMode,
-    pub display_list: Vec<PaintText>,
+    pub display_list: Vec<Paint>,
     pub rect: Rect,
-}
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LayoutMode {
-    Document,
-    Block,
-    Inline,
+    margin: CssQuad<f32>,
+    border: CssQuad<f32>,
+    padding: CssQuad<f32>,
 }
 
 struct DocumentContext<'v, 'p> {
     viewport: &'v ViewportInfo,
-    display_list: &'p mut Vec<PaintText>,
+    display_list: &'p mut Vec<Paint>,
     block: BlockContext,
 }
 
 #[derive(Debug, Clone)]
-struct BlockContext {
-    font_size: f32,
-    font_weight_bold: bool,
-    font_style_italic: bool,
-}
+struct BlockContext {}
 
 #[derive(Debug)]
 struct InlineContext {
     cursor: Pos2,
     max_ascent: f32,
     max_height: f32,
-    line_display_list: Vec<PaintText>,
+    line_display_list: Vec<Paint>,
 }
 
 #[derive(Clone)]
@@ -109,56 +109,92 @@ pub struct Layout(Arc<RwLock<OwnedLayout>>);
 
 impl Debug for Layout {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            format!("{:?}", self.read()).strip_prefix("Owned").unwrap()
-        )
+        let mut tuple = f.debug_tuple("\x1B[1;95mL{\x1B[0m");
+        if let Some(node) = self.node() {
+            tuple.field(&format_args!("{}", &*node.data()));
+        }
+        for layout in &*self.children() {
+            tuple.field(&format_args!("b={:?}", layout));
+        }
+        for node in &*self.inlines() {
+            tuple.field(&format_args!("i={}", &*node.data()));
+        }
+
+        tuple.finish()?;
+        f.write_str("\x1B[1;95m}\x1B[0m")
     }
 }
 
 impl Layout {
-    fn with_mode(node: Node, mode: LayoutMode) -> Self {
+    pub fn anonymous(nodes: impl IntoIterator<Item = Node>) -> Self {
         Self(Arc::new(RwLock::new(OwnedLayout {
-            node,
+            node: None,
+            inlines: nodes.into_iter().collect(),
             parent: Weak::new(),
             previous: Weak::new(),
             children: vec![],
-            mode,
             display_list: vec![],
             rect: Rect::NAN,
+
+            margin: CssQuad::one(0.0),
+            border: CssQuad::one(0.0),
+            padding: CssQuad::one(0.0),
         })))
     }
 
-    fn mode_for(node: Node) -> Option<LayoutMode> {
-        match node.r#type() {
-            NodeType::Document => Some(LayoutMode::Block),
-            NodeType::Element => {
-                for child in &*node.children() {
-                    if DISPLAY_BLOCK.contains(&&*child.name()) {
-                        return Some(LayoutMode::Block);
-                    }
-                }
+    pub fn with_node(node: Node, available: f32) -> Self {
+        let style = node.data().style();
+        let font_size = style.font_size();
 
-                Some(if node.children().is_empty() {
-                    LayoutMode::Block
-                } else {
-                    LayoutMode::Inline
-                })
-            }
-            NodeType::Text => Some(LayoutMode::Block),
-            NodeType::Comment => Some(LayoutMode::Block),
+        Self(Arc::new(RwLock::new(OwnedLayout {
+            node: Some(node),
+            inlines: vec![],
+            parent: Weak::new(),
+            previous: Weak::new(),
+            children: vec![],
+            display_list: vec![],
+            rect: Rect::NAN,
+
+            margin: style
+                .margin()
+                .flat_map(|x| Some(x.resolve(available, font_size))),
+            border: style
+                .border_width()
+                .flat_map(|x| x.resolve_no_percent(font_size)),
+            padding: style
+                .padding()
+                .flat_map(|x| Some(x.resolve(available, font_size))),
+        })))
+    }
+
+    /// returns true iff the given subtree can be skipped entirely.
+    fn is_skippable(node: &Node) -> bool {
+        match node.data().style().display() {
+            CssDisplay::None => true,
+            _ => false,
         }
     }
 
-    pub fn document(node: Node) -> Self {
-        assert!(matches!(&*node.data(), NodeData::Document));
+    /// returns true iff the given Node forces boxes to be created.
+    fn is_block_level(node: &Node) -> bool {
+        // no if text or comment
+        match node.r#type() {
+            NodeType::Text => return false,
+            NodeType::Comment => return false,
+            _ => {}
+        }
 
-        Self::with_mode(node, LayoutMode::Document)
-    }
+        // yes if we have a block-level ‘display’
+        let blocky_display = match node.data().style().display() {
+            CssDisplay::None => false,
+            CssDisplay::Inline => false,
+            CssDisplay::Block => true,
+            CssDisplay::InlineBlock => true,
+            CssDisplay::ListItem => true,
+        };
 
-    pub fn block(&self, node: Node) -> Self {
-        Self::with_mode(node, LayoutMode::Block)
+        // or if any of our children force boxes to be created
+        blocky_display || node.children().iter().any(|x| Self::is_block_level(x))
     }
 
     pub fn append(&self, child: Layout) -> Self {
@@ -185,156 +221,249 @@ impl Layout {
         LayoutWrite::new(self.0.try_write().unwrap())
     }
 
-    pub fn node(&self) -> LayoutRead<Node> {
-        self.read().map(|x| &x.node)
+    pub fn node(&self) -> Option<LayoutRead<Node>> {
+        self.read()
+            .try_map(|x| match &x.node {
+                Some(x) => Ok(x),
+                None => Err(()),
+            })
+            .ok()
     }
 
-    pub fn mode(&self) -> LayoutMode {
-        self.read().mode
+    pub fn inlines(&self) -> LayoutRead<[Node]> {
+        self.read().map(|x| &*x.inlines)
     }
 
     pub fn children(&self) -> LayoutRead<[Layout]> {
         self.read().map(|x| &*x.children)
     }
 
-    pub fn display_list(&self) -> LayoutRead<[PaintText]> {
+    pub fn display_list(&self) -> LayoutRead<[Paint]> {
         self.read().map(|x| &*x.display_list)
     }
 
+    #[instrument(skip(viewport))]
     pub fn layout(&self, viewport: &ViewportInfo) -> eyre::Result<()> {
-        assert!(self.mode() == LayoutMode::Document);
+        assert_eq!(self.inlines().len(), 0);
+        assert_eq!(self.node().unwrap().r#type(), NodeType::Document);
 
         let mut display_list = vec![];
-        let mut document_context = DocumentContext {
+        let mut dc = DocumentContext {
             viewport,
             display_list: &mut display_list,
-            block: BlockContext {
-                font_size: FONT_SIZE,
-                font_weight_bold: false,
-                font_style_italic: false,
-            },
+            block: BlockContext {},
         };
 
-        self.layout0(&mut document_context)?;
+        self.write().rect =
+            Rect::from_min_size(dc.viewport.rect.min, vec2(dc.viewport.rect.width(), 0.0));
+        self.f(&mut dc)?;
         self.write().display_list = display_list;
 
         Ok(())
     }
 
-    fn layout0(&self, dc: &mut DocumentContext) -> eyre::Result<()> {
+    fn f(&self, dc: &mut DocumentContext) -> eyre::Result<()> {
         // trace!(mode = ?self.mode(), node = %*self.node().data());
 
-        let initial_rect = |previous: Option<&Layout>| {
-            let mut result = self.read().rect;
-            if let Some(previous) = previous {
-                result.set_top(previous.read().rect.bottom());
-            }
-            result.set_height(0.0);
-            result
-        };
+        // save where we started, for background paint
+        let i = dc.display_list.len();
 
-        let old_block_context = dc.block.clone();
+        let (mut margin_rect, mut padding_rect, mut border_rect, mut content_rect) =
+            if let Some(node) = self.node() {
+                let mut rect = self.read().rect;
+                let margin_rect = rect;
+                rect.set_top(rect.top() + self.read().margin.top().unwrap());
+                rect.set_left(rect.left() + self.read().margin.left().unwrap());
+                rect.set_right(rect.right() - self.read().margin.right().unwrap());
+                let border_rect = rect;
+                rect.set_top(rect.top() + self.read().border.top().unwrap());
+                rect.set_left(rect.left() + self.read().border.left().unwrap());
+                rect.set_right(rect.right() - self.read().border.right().unwrap());
+                let padding_rect = rect;
+                rect.set_top(rect.top() + self.read().padding.top().unwrap());
+                rect.set_left(rect.left() + self.read().padding.left().unwrap());
+                rect.set_right(rect.right() - self.read().padding.right().unwrap());
+                let content_rect = rect;
 
-        // separate let releases RwLock read!
-        let node = self.node().clone();
-        match &*node.name() {
-            // presentational hints
-            x if DISPLAY_NONE.contains(&x) => return Ok(()),
-            "body" => {
-                // hack for body{margin:1em}
-                self.write().rect.min.x += MARGIN;
-                self.write().rect.max.x -= MARGIN;
-                self.write().rect.min.y += MARGIN;
-                self.write().rect.max.y += MARGIN;
-            }
-            "h1" => {
-                dc.block.font_size *= 2.5;
-                dc.block.font_weight_bold = true;
-            }
-            "h2" => {
-                dc.block.font_size *= 2.0;
-                dc.block.font_weight_bold = true;
-            }
-            "h3" => {
-                dc.block.font_size *= 1.5;
-                dc.block.font_weight_bold = true;
-            }
-            "h4" => {
-                dc.block.font_size *= 1.25;
-                dc.block.font_weight_bold = true;
-            }
-            "h5" => {
-                dc.block.font_size *= 1.0;
-                dc.block.font_weight_bold = true;
-            }
-            "h6" => {
-                dc.block.font_size *= 0.75;
-                dc.block.font_weight_bold = true;
-            }
-            _ => {}
-        }
+                (margin_rect, padding_rect, border_rect, content_rect)
+            } else {
+                let rect = self.read().rect;
 
-        match self.mode() {
-            LayoutMode::Document => {
-                self.write().rect =
-                    Rect::from_min_size(dc.viewport.rect.min, vec2(dc.viewport.rect.width(), 0.0));
+                (rect, rect, rect, rect)
+            };
 
-                let layout = self.block(self.node().clone());
-                layout.write().rect = initial_rect(None);
-                layout.layout0(dc)?;
+        // boxes inside this box
+        let mut boxes = vec![];
 
-                // setting max rather than adding layout rect size (for hack)
-                self.write().rect.max = layout.read().rect.max;
+        // nodes that will go in the next such box
+        let mut inlines = vec![];
 
-                // hack for body{margin:1em}
-                self.write().rect.max.y += MARGIN;
-
-                self.append(layout);
-                debug!(mode = ?self.mode(), height = self.read().rect.height(), display_list_len = dc.display_list.len());
-            }
-            LayoutMode::Block => {
-                // separate let releases RwLock read!
-                let node = self.node().clone();
-                match Self::mode_for(node) {
-                    Some(LayoutMode::Block) => {
-                        // temporary layout list releases RwLock read!
-                        let mut layouts: Vec<Layout> = vec![];
-                        for child in &*self.node().children() {
-                            let layout = self.block(child.clone());
-                            layout.write().rect = initial_rect(layouts.last());
-                            layout.layout0(dc)?;
-                            layouts.push(layout);
-                        }
-                        for layout in layouts {
-                            // setting max rather than adding layout rect size (for hack)
-                            self.write().rect.max = layout.read().rect.max;
-
-                            self.append(layout);
-                        }
-                    }
-                    Some(LayoutMode::Inline) => {
-                        let mut inline_context = InlineContext {
-                            cursor: self.read().rect.min,
-                            max_ascent: 0.0,
-                            max_height: 0.0,
-                            line_display_list: vec![],
-                        };
-
-                        // separate let releases RwLock read!
-                        let node = self.node().clone();
-                        self.recurse(node, dc, &mut inline_context)?;
-                        self.flush(dc, &mut inline_context)?;
-                        self.write().rect.set_bottom(inline_context.cursor.y);
-                    }
-                    _ => unreachable!(),
+        // for all children, accumulate inlines in
+        // the nodes vec. when we see a block-level descendant, make an
+        // anonymous box for those inlines, then make a box for that
+        // block-level descendant, then go back to the accumulate step.
+        let candidates: Vec<Node> = self
+            .node()
+            .iter()
+            .flat_map(|n| n.children().to_owned())
+            .collect();
+        for child in candidates {
+            if Self::is_block_level(&child) {
+                if !inlines.is_empty() {
+                    let layout = Self::anonymous(inlines.drain(..));
+                    trace!(box_child = %*child.data(), before = ?layout);
+                    boxes.push(layout);
+                } else {
+                    trace!(box_child = %*child.data());
                 }
+                let layout = Self::with_node(child, self.read().rect.width());
+                boxes.push(layout);
+            } else if !Self::is_skippable(&child) {
+                trace!(line_child = %*child.data());
+                inlines.push(child);
             }
-            LayoutMode::Inline => unreachable!(),
         }
 
-        dc.block = old_block_context;
+        // if there are any inlines left over:
+        if !inlines.is_empty() {
+            // if there are other boxes inside this box, create an
+            // anonymous box for them.
+            if !boxes.is_empty() {
+                let layout = Self::anonymous(inlines.drain(..));
+                boxes.push(layout);
+            }
+            // otherwise, there were only inlines, so make all of them
+            // our own nodes.
+            else {
+                self.write().inlines.append(&mut inlines);
+            }
+        }
 
-        trace!(mode = ?self.mode(), node = %*self.node().data(), outer = ?self.mode(), inner = ?Self::mode_for(self.node().clone()), height = self.read().rect.height());
+        #[rustfmt::skip]
+        assert!(
+            // either we have only boxes inside (anonymous or otherwise)
+            (!boxes.is_empty() && self.inlines().is_empty())
+            ||
+            // or we have inlines inside with no boxes inside
+            (!self.inlines().is_empty() && boxes.is_empty())
+            ||
+            // or we have neither if(?) the document is entirely empty
+            (boxes.is_empty() && self.inlines().is_empty())
+            ,
+            "bad layout! {:?}", self
+        );
+
+        if !boxes.is_empty() {
+            for layout in boxes {
+                let node = layout.node().map(|x| x.clone());
+                self.append(layout.clone());
+                let previous = layout.read().previous.upgrade().map(Self);
+                layout.write().rect = content_rect;
+                if let Some(previous) = previous {
+                    layout.write().rect.set_top(previous.read().rect.bottom());
+                }
+                if let Some(node) = node {
+                    let available = layout.read().rect.width();
+                    let margin_left = layout.read().margin.left();
+                    let border_left = layout.read().border.left();
+                    let padding_left = layout.read().padding.left();
+                    let padding_right = layout.read().padding.right();
+                    let border_right = layout.read().border.right();
+                    let margin_right = layout.read().margin.right();
+                    debug!(
+                        node = %*node.data(),
+                        width = ?node.data().style().width,
+                        available,
+                        mbppbm = ?(margin_left, border_left, padding_left, padding_right, border_right, margin_right),
+                    );
+                    layout
+                        .write()
+                        .rect
+                        .set_width(node.data().style().box_width(available));
+                }
+                layout.write().rect.set_height(0.0);
+                layout.f(dc)?;
+                content_rect.set_bottom(layout.read().rect.bottom());
+                trace!(rect = ?self.read().rect, extender = ?layout.read().rect);
+            }
+        } else if !self.inlines().is_empty() {
+            let mut ic = InlineContext {
+                cursor: content_rect.min,
+                max_ascent: 0.0,
+                max_height: 0.0,
+                line_display_list: vec![],
+            };
+
+            // separate let releases RwLock read!
+            let nodes = self.inlines().to_owned();
+            for node in nodes {
+                self.recurse(node.clone(), dc, &mut ic)?;
+                self.flush(dc, &mut ic)?;
+                content_rect.set_bottom(ic.cursor.y);
+            }
+        }
+
+        padding_rect.set_bottom(content_rect.bottom() + self.read().padding.bottom().unwrap());
+        border_rect.set_bottom(padding_rect.bottom() + self.read().border.bottom().unwrap());
+        margin_rect.set_bottom(border_rect.bottom() + self.read().margin.bottom().unwrap());
+        self.write().rect.set_bottom(margin_rect.bottom());
+
+        if let Some(node) = self.node() {
+            let style = node.data().style();
+            let current_color = style.color();
+            dc.display_list.insert(
+                i,
+                Paint::Fill(
+                    padding_rect,
+                    style.background_color().resolve(current_color),
+                ),
+            );
+
+            let border_top_rect = Rect::from_x_y_ranges(
+                border_rect.min.x..=border_rect.max.x,
+                border_rect.min.y..=padding_rect.min.y,
+            );
+            let border_bottom_rect = Rect::from_x_y_ranges(
+                border_rect.min.x..=border_rect.max.x,
+                padding_rect.max.y..=border_rect.max.y,
+            );
+            let border_left_rect = Rect::from_x_y_ranges(
+                border_rect.min.x..=padding_rect.min.x,
+                border_rect.min.y..=border_rect.max.y,
+            );
+            let border_right_rect = Rect::from_x_y_ranges(
+                padding_rect.max.x..=border_rect.max.x,
+                border_rect.min.y..=border_rect.max.y,
+            );
+            dc.display_list.insert(
+                i,
+                Paint::Fill(
+                    border_top_rect,
+                    style.border_top_color().resolve(current_color),
+                ),
+            );
+            dc.display_list.insert(
+                i,
+                Paint::Fill(
+                    border_right_rect,
+                    style.border_right_color().resolve(current_color),
+                ),
+            );
+            dc.display_list.insert(
+                i,
+                Paint::Fill(
+                    border_bottom_rect,
+                    style.border_bottom_color().resolve(current_color),
+                ),
+            );
+            dc.display_list.insert(
+                i,
+                Paint::Fill(
+                    border_left_rect,
+                    style.border_left_color().resolve(current_color),
+                ),
+            );
+        }
 
         Ok(())
     }
@@ -349,11 +478,9 @@ impl Layout {
         match node.r#type() {
             NodeType::Document => unreachable!(),
             NodeType::Element => {
-                self.open_tag(&node.name(), dc, ic);
                 for child in &*node.children() {
                     self.recurse(child.clone(), dc, ic)?;
                 }
-                self.close_tag(&node.name(), dc, ic);
             }
             NodeType::Text => {
                 self.text(node.clone(), dc, ic)?;
@@ -371,22 +498,21 @@ impl Layout {
         ic: &mut InlineContext,
     ) -> eyre::Result<()> {
         assert_eq!(node.r#type(), NodeType::Text);
+        let style = node.data().style();
         let font = FontInfo::new(
-            FontFamily::Name(
-                match (dc.block.font_weight_bold, dc.block.font_style_italic) {
-                    (false, false) => FONTS[0].0.into(),
-                    (true, false) => FONTS[1].0.into(),
-                    (false, true) => FONTS[2].0.into(),
-                    (true, true) => FONTS[3].0.into(),
-                },
-            ),
-            match (dc.block.font_weight_bold, dc.block.font_style_italic) {
-                (false, false) => FONTS[0].1,
-                (true, false) => FONTS[1].1,
-                (false, true) => FONTS[2].1,
-                (true, true) => FONTS[3].1,
+            FontFamily::Name(match (style.font_weight(), style.font_style()) {
+                (CssFontWeight::Normal, CssFontStyle::Normal) => FONTS[0].0.into(),
+                (CssFontWeight::Bold, CssFontStyle::Normal) => FONTS[1].0.into(),
+                (CssFontWeight::Normal, CssFontStyle::Italic) => FONTS[2].0.into(),
+                (CssFontWeight::Bold, CssFontStyle::Italic) => FONTS[3].0.into(),
+            }),
+            match (style.font_weight(), style.font_style()) {
+                (CssFontWeight::Normal, CssFontStyle::Normal) => FONTS[0].1,
+                (CssFontWeight::Bold, CssFontStyle::Normal) => FONTS[1].1,
+                (CssFontWeight::Normal, CssFontStyle::Italic) => FONTS[2].1,
+                (CssFontWeight::Bold, CssFontStyle::Italic) => FONTS[3].1,
             },
-            dc.block.font_size,
+            style.font_size(),
             dc.viewport.scale,
         )?;
         let rect = self.read().rect;
@@ -417,8 +543,12 @@ impl Layout {
                 ic.max_ascent = ic.max_ascent.max(ascent);
                 ic.max_height = ic.max_height.max(height);
                 let rect = Rect::from_min_size(ic.cursor, vec2(advance, height));
-                ic.line_display_list
-                    .push(PaintText(rect, font.clone(), word.to_string()));
+                ic.line_display_list.push(Paint::Text(
+                    rect,
+                    style.color(),
+                    font.clone(),
+                    word.to_string(),
+                ));
                 ic.cursor.x += advance;
             }
             input = rest;
@@ -429,9 +559,18 @@ impl Layout {
     }
 
     fn flush(&self, dc: &mut DocumentContext, ic: &mut InlineContext) -> eyre::Result<()> {
-        for mut paint in ic.line_display_list.drain(..) {
-            *paint.0.top_mut() += ic.max_ascent - paint.1.ab.ascent() / dc.viewport.scale;
-            dc.display_list.push(paint);
+        for mut text in ic.line_display_list.drain(..) {
+            match &mut text {
+                Paint::Text(rect, _, font, _) => {
+                    *rect = rect.translate(vec2(
+                        0.0,
+                        ic.max_ascent - font.ab.ascent() / dc.viewport.scale,
+                    ));
+                }
+                _ => unreachable!(),
+            }
+
+            dc.display_list.push(text);
         }
 
         ic.cursor.x = self.read().rect.min.x;
@@ -440,25 +579,5 @@ impl Layout {
         ic.max_height = 0.0;
 
         Ok(())
-    }
-
-    fn open_tag(&self, name: &str, dc: &mut DocumentContext, _ic: &mut InlineContext) {
-        match name {
-            "b" => dc.block.font_weight_bold = true,
-            "i" => dc.block.font_style_italic = true,
-            "big" => dc.block.font_size *= 1.5,
-            "small" => dc.block.font_size /= 1.5,
-            _ => {}
-        }
-    }
-
-    fn close_tag(&self, name: &str, dc: &mut DocumentContext, _ic: &mut InlineContext) {
-        match name {
-            "b" => dc.block.font_weight_bold = false,
-            "i" => dc.block.font_style_italic = false,
-            "big" => dc.block.font_size /= 1.5,
-            "small" => dc.block.font_size *= 1.5,
-            _ => {}
-        }
     }
 }

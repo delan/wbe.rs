@@ -17,7 +17,7 @@ pub fn is_html_space(c: char) -> bool {
 pub fn html_ident(input: &str) -> IResult<&str, &str> {
     take_while1(|c| match c {
         c if c.is_ascii_alphanumeric() => true,
-        '!' | '?' | ':' | '-' => true,
+        '?' | ':' | '-' => true,
         _ => false,
     })(input)
 }
@@ -125,6 +125,10 @@ pub fn html_comment(input: &str) -> IResult<&str, &str> {
     preceded(tag("<!--"), shortest_until_tag_no_case("-->"))(input)
 }
 
+pub fn html_doctype(input: &str) -> IResult<&str, &str> {
+    preceded(tag("<!"), shortest_until_tag_no_case(">"))(input)
+}
+
 pub fn html_entity(in_attr: bool) -> impl FnMut(&str) -> IResult<&str, &str> {
     move |input: &str| {
         for i in ENTITIES_WITH_SEMICOLON_REGEX.matches(input) {
@@ -141,7 +145,12 @@ pub fn html_entity(in_attr: bool) -> impl FnMut(&str) -> IResult<&str, &str> {
             }
         }
 
-        fail(input)
+        if input.is_empty() {
+            fail(input)
+        } else {
+            let (ampersand, rest) = input.split_at(1);
+            Ok((rest, ampersand))
+        }
     }
 }
 
@@ -162,6 +171,7 @@ pub enum HtmlToken<'i> {
     Style(Vec<(&'i str, String)>, &'i str),
     Tag(bool, &'i str, Vec<(&'i str, String)>),
     Text(&'i str),
+    Doctype(&'i str),
 }
 
 pub fn html_token(input: &str) -> IResult<&str, HtmlToken> {
@@ -176,6 +186,9 @@ pub fn html_token(input: &str) -> IResult<&str, HtmlToken> {
     }
     if let Ok((rest, (closing, name, attrs))) = html_tag(input) {
         return Ok((rest, HtmlToken::Tag(closing, name, attrs)));
+    }
+    if let Ok((rest, doctype)) = html_doctype(input) {
+        return Ok((rest, HtmlToken::Doctype(doctype)));
     }
 
     let (rest, text) = html_text(false)(input)?;
