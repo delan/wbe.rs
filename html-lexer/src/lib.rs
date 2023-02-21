@@ -145,7 +145,12 @@ pub fn html_entity(in_attr: bool) -> impl FnMut(&str) -> IResult<&str, &str> {
             }
         }
 
-        fail(input)
+        if input.is_empty() {
+            fail(input)
+        } else {
+            let (ampersand, rest) = input.split_at(1);
+            Ok((rest, ampersand))
+        }
     }
 }
 
