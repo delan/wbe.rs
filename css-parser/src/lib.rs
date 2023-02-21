@@ -2,8 +2,8 @@ use egui::Color32;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take, take_until, take_while, take_while1},
-    character::complete::{alpha1, anychar, one_of, u8},
-    combinator::{fail, map, opt, peek, recognize, success},
+    character::complete::{alpha1, anychar, one_of},
+    combinator::{fail, map, opt, peek, recognize},
     multi::{count, many0, many1, many_till, separated_list0, separated_list1},
     number::complete::float,
     sequence::{preceded, separated_pair, terminated, tuple},

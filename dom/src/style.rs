@@ -2,7 +2,7 @@ use std::fmt::{Debug, Display};
 
 use egui::Color32;
 
-use tracing::{error, warn};
+use tracing::warn;
 use wbe_core::FONT_SIZE;
 use wbe_css_parser::color_numeric;
 
@@ -354,7 +354,7 @@ impl CssLength {
     pub fn resolve_no_percent(&self, em_base: f32) -> Option<f32> {
         match self {
             CssLength::Percent(_) => None,
-            other => Some(self.resolve(f32::NAN, em_base)),
+            other => Some(other.resolve(f32::NAN, em_base)),
         }
     }
 }

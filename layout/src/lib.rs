@@ -15,59 +15,18 @@ use std::{
 
 use ab_glyph::ScaleFont;
 use backtrace::Backtrace;
-use egui::{vec2, Color32, FontFamily, Pos2, Rect};
+use egui::{vec2, FontFamily, Pos2, Rect};
 use eyre::bail;
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 use tracing::{debug, instrument, trace, warn};
 use unicode_segmentation::UnicodeSegmentation;
 
-use wbe_core::{dump_backtrace, FONTS, FONT_SIZE, MARGIN};
+use wbe_core::{dump_backtrace, FONTS};
 use wbe_dom::{
     style::{CssDisplay, CssFontStyle, CssFontWeight, CssQuad},
-    Node, NodeData, NodeType,
+    Node, NodeType,
 };
 use wbe_html_lexer::{html_word, HtmlWord};
-
-const DISPLAY_NONE: &[&str] = &["#comment", "head", "title", "script", "style"];
-const DISPLAY_BLOCK: &[&str] = &[
-    "html",
-    "body",
-    "article",
-    "section",
-    "nav",
-    "aside",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "hgroup",
-    "header",
-    "footer",
-    "address",
-    "p",
-    "hr",
-    "pre",
-    "blockquote",
-    "ol",
-    "ul",
-    "menu",
-    "li",
-    "dl",
-    "dt",
-    "dd",
-    "figure",
-    "figcaption",
-    "main",
-    "div",
-    "table",
-    "form",
-    "fieldset",
-    "legend",
-    "details",
-    "summary",
-];
 
 pub type LayoutRead<'n, T> = RwLockReadGuardRef<'n, OwnedLayout, T>;
 pub type LayoutWrite<'n, T> = RwLockWriteGuardRefMut<'n, OwnedLayout, T>;
@@ -90,11 +49,7 @@ pub struct OwnedLayout {
 struct DocumentContext<'v, 'p> {
     viewport: &'v ViewportInfo,
     display_list: &'p mut Vec<Paint>,
-    block: BlockContext,
 }
-
-#[derive(Debug, Clone)]
-struct BlockContext {}
 
 #[derive(Debug)]
 struct InlineContext {
@@ -251,7 +206,6 @@ impl Layout {
         let mut dc = DocumentContext {
             viewport,
             display_list: &mut display_list,
-            block: BlockContext {},
         };
 
         self.write().rect =
@@ -269,7 +223,7 @@ impl Layout {
         let i = dc.display_list.len();
 
         let (mut margin_rect, mut padding_rect, mut border_rect, mut content_rect) =
-            if let Some(node) = self.node() {
+            if self.node().is_some() {
                 let mut rect = self.read().rect;
                 let margin_rect = rect;
                 rect.set_top(rect.top() + self.read().margin.top().unwrap());

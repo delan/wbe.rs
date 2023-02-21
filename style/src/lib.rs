@@ -1,10 +1,7 @@
-use egui::Color32;
 use eyre::eyre;
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{debug, info, instrument, trace, warn};
 
-use wbe_css_parser::{
-    css_file, css_hash, css_ident, Combinator, ComplexSelector, CompoundSelector, RuleList,
-};
+use wbe_css_parser::{css_file, css_hash, css_ident, Combinator, ComplexSelector, RuleList};
 use wbe_dom::{
     style::{CssBorder, CssColor, CssFontStyle, CssFontWeight, CssLength, CssQuad, CssWidth},
     Node, NodeType, Style,
@@ -196,6 +193,7 @@ fn match_complex(node: &Node, (combinators, compound): &ComplexSelector) -> bool
 #[test]
 #[rustfmt::skip]
 fn test() -> eyre::Result<()> {
+    use wbe_css_parser::CompoundSelector;
     use wbe_html_parser::parse_html;
 
     let dom = parse_html("<html><body><p><b></b><i></i><a id=b class='c d'>x</a>")?;
