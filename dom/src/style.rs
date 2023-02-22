@@ -331,7 +331,9 @@ impl CssColor {
 
 impl CssLength {
     pub fn parse(value: &str) -> Option<CssLength> {
-        if let Some(number) = value.strip_suffix("%") {
+        if value == "0" {
+            Some(CssLength::Zero)
+        } else if let Some(number) = value.strip_suffix("%") {
             number.parse::<f32>().ok().map(CssLength::Percent)
         } else if let Some(number) = value.strip_suffix("px") {
             number.parse::<f32>().ok().map(CssLength::Px)
