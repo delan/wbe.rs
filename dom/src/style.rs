@@ -4,7 +4,7 @@ use egui::Color32;
 
 use tracing::warn;
 use wbe_core::FONT_SIZE;
-use wbe_css_parser::color_numeric;
+use wbe_css_parser::{color_numeric, font_shorthand, CssLength};
 
 lazy_static::lazy_static! {
     pub static ref INITIAL_STYLE: Style = Style {
@@ -12,9 +12,7 @@ lazy_static::lazy_static! {
         margin: Some(CssQuad::one(CssLength::Zero)),
         padding: Some(CssQuad::one(CssLength::Zero)),
         border: Some(CssQuad::one(CssBorder::none())),
-        font_size: Some(FONT_SIZE),
-        font_weight: Some(CssFontWeight::Normal),
-        font_style: Some(CssFontStyle::Normal),
+        font: Some(CssFont::initial()),
         width: Some(CssWidth::Auto),
         background_color: Some(CssColor::Other(Color32::TRANSPARENT)),
         color: Some(Color32::BLACK),
@@ -27,9 +25,7 @@ pub struct Style {
     pub margin: Option<CssQuad<CssLength>>,
     pub padding: Option<CssQuad<CssLength>>,
     pub border: Option<CssQuad<CssBorder>>,
-    pub font_size: Option<f32>,
-    pub font_weight: Option<CssFontWeight>,
-    pub font_style: Option<CssFontStyle>,
+    pub font: Option<CssFont>,
     pub width: Option<CssWidth>,
     pub background_color: Option<CssColor>,
     pub color: Option<Color32>,
@@ -39,14 +35,6 @@ pub struct Style {
 pub enum CssColor {
     CurrentColor,
     Other(Color32),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum CssLength {
-    Zero,
-    Percent(f32),
-    Px(f32),
-    Em(f32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -66,16 +54,25 @@ pub enum CssDisplay {
     ListItem,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum CssFontWeight {
-    Normal,
-    Bold,
+#[derive(Debug, Clone, PartialEq)]
+pub struct CssFont {
+    pub line_height: Option<f32>,
+    pub size: Option<f32>,
+    pub family: Option<Vec<String>>,
+    pub style: Option<CssFontStyle>,
+    pub weight: Option<CssFontWeight>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CssFontStyle {
     Normal,
     Italic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CssFontWeight {
+    Normal,
+    Bold,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -97,9 +94,7 @@ impl Style {
             margin: None,
             padding: None,
             border: None,
-            font_size: None,
-            font_weight: None,
-            font_style: None,
+            font: None,
             width: None,
             background_color: None,
             color: None,
@@ -112,9 +107,7 @@ impl Style {
 
     pub fn new_inherited(&self) -> Self {
         Self {
-            font_size: self.font_size,
-            font_weight: self.font_weight,
-            font_style: self.font_style,
+            font: self.font.clone(),
             color: self.color.clone(),
             ..Self::initial().clone()
         }
@@ -203,15 +196,21 @@ impl Style {
     }
 
     pub fn font_size(&self) -> f32 {
-        self.get(|s| s.font_size)
-    }
+        let result = self.get(|s| s.font.as_ref().map(|f| f.size));
 
-    pub fn font_weight(&self) -> CssFontWeight {
-        self.get(|s| s.font_weight)
+        result.unwrap_or_else(|| Self::initial().font.as_ref().unwrap().size.unwrap())
     }
 
     pub fn font_style(&self) -> CssFontStyle {
-        self.get(|s| s.font_style)
+        let result = self.get(|s| s.font.as_ref().map(|f| f.style));
+
+        result.unwrap_or_else(|| Self::initial().font.as_ref().unwrap().style.unwrap())
+    }
+
+    pub fn font_weight(&self) -> CssFontWeight {
+        let result = self.get(|s| s.font.as_ref().map(|f| f.weight));
+
+        result.unwrap_or_else(|| Self::initial().font.as_ref().unwrap().weight.unwrap())
     }
 
     pub fn box_width(&self, percent_base: f32) -> f32 {
@@ -329,38 +328,6 @@ impl CssColor {
     }
 }
 
-impl CssLength {
-    pub fn parse(value: &str) -> Option<CssLength> {
-        if value == "0" {
-            Some(CssLength::Zero)
-        } else if let Some(number) = value.strip_suffix("%") {
-            number.parse::<f32>().ok().map(CssLength::Percent)
-        } else if let Some(number) = value.strip_suffix("px") {
-            number.parse::<f32>().ok().map(CssLength::Px)
-        } else if let Some(number) = value.strip_suffix("em") {
-            number.parse::<f32>().ok().map(CssLength::Em)
-        } else {
-            None
-        }
-    }
-
-    pub fn resolve(&self, percent_base: f32, em_base: f32) -> f32 {
-        match self {
-            CssLength::Zero => 0.0,
-            CssLength::Percent(x) => x / 100.0 * percent_base,
-            CssLength::Px(x) => *x,
-            CssLength::Em(x) => x * em_base,
-        }
-    }
-
-    pub fn resolve_no_percent(&self, em_base: f32) -> Option<f32> {
-        match self {
-            CssLength::Percent(_) => None,
-            other => Some(other.resolve(f32::NAN, em_base)),
-        }
-    }
-}
-
 impl<T: Debug + Clone + Copy + PartialEq> CssQuad<T> {
     pub fn one(all: impl Into<Option<T>> + Copy) -> Self {
         Self::four(all, all, all, all)
@@ -460,6 +427,50 @@ impl<T: Debug + Copy + Clone + PartialEq> Default for CssQuad<T> {
     }
 }
 
+impl CssFont {
+    fn initial() -> Self {
+        Self {
+            line_height: Some(1.25),
+            size: Some(FONT_SIZE),
+            family: Some(vec!["serif".to_owned()]),
+            style: Some(CssFontStyle::Normal),
+            weight: Some(CssFontWeight::Normal),
+        }
+    }
+
+    pub fn none() -> Self {
+        Self {
+            line_height: None,
+            size: None,
+            family: None,
+            style: None,
+            weight: None,
+        }
+    }
+
+    pub fn parse_shorthand(value: &str) -> Option<(Self, CssLength)> {
+        let mut result = Self::none();
+        result.style = Some(CssFontStyle::Normal);
+        result.weight = Some(CssFontWeight::Normal);
+
+        if let Ok(("", (keywords, size, line_height, family))) = font_shorthand(value) {
+            for keyword in keywords {
+                match keyword {
+                    "normal" => continue,
+                    "italic" => result.style = Some(CssFontStyle::Italic),
+                    "bold" => result.weight = Some(CssFontWeight::Bold),
+                    _ => return None,
+                }
+            }
+            result.line_height = line_height;
+            result.family = Some(family.into_iter().map(|x| x.to_owned()).collect());
+            return Some((result, size));
+        }
+
+        None
+    }
+}
+
 impl CssWidth {
     pub fn resolve(&self, percent_base: f32, em_base: f32) -> f32 {
         match self {
@@ -502,7 +513,6 @@ impl CssBorder {
 
 #[test]
 pub fn parse() {
-    assert_eq!(CssLength::parse("1em"), Some(CssLength::Em(1.0)));
     assert_eq!(
         CssBorder::parse_shorthand("1em solid black"),
         Some(CssBorder {
@@ -517,17 +527,6 @@ impl Display for CssWidth {
         match self {
             Self::Auto => write!(f, "auto"),
             Self::Length(x) => write!(f, "{}", x),
-        }
-    }
-}
-
-impl Display for CssLength {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CssLength::Zero => write!(f, "0"),
-            CssLength::Percent(x) => write!(f, "{}%", x),
-            CssLength::Px(x) => write!(f, "{}px", x),
-            CssLength::Em(x) => write!(f, "{}em", x),
         }
     }
 }

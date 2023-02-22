@@ -1,9 +1,11 @@
+use std::fmt::Display;
+
 use egui::Color32;
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take, take_until, take_while, take_while1},
+    bytes::complete::{is_a, tag, take, take_until, take_while, take_while1},
     character::complete::{alpha1, anychar, one_of},
-    combinator::{fail, map, opt, peek, recognize},
+    combinator::{fail, map, map_parser, opt, peek, recognize},
     multi::{count, many0, many1, many_till, separated_list0, separated_list1},
     number::complete::float,
     sequence::{preceded, separated_pair, terminated, tuple},
@@ -215,6 +217,71 @@ pub fn color_numeric(input: &str) -> IResult<&str, Color32> {
     Ok((rest, Color32::from_rgba_unmultiplied(r, g, b, a)))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CssLength {
+    Zero,
+    Percent(f32),
+    Px(f32),
+    Em(f32),
+}
+
+impl CssLength {
+    pub fn parse(value: &str) -> Option<CssLength> {
+        if let Ok(("", result)) = length(value) {
+            Some(result)
+        } else {
+            None
+        }
+    }
+
+    pub fn resolve(&self, percent_base: f32, em_base: f32) -> f32 {
+        match self {
+            CssLength::Zero => 0.0,
+            CssLength::Percent(x) => x / 100.0 * percent_base,
+            CssLength::Px(x) => *x,
+            CssLength::Em(x) => x * em_base,
+        }
+    }
+
+    pub fn resolve_no_percent(&self, em_base: f32) -> Option<f32> {
+        match self {
+            CssLength::Percent(_) => None,
+            other => Some(other.resolve(f32::NAN, em_base)),
+        }
+    }
+}
+
+impl Display for CssLength {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CssLength::Zero => write!(f, "0"),
+            CssLength::Percent(x) => write!(f, "{}%", x),
+            CssLength::Px(x) => write!(f, "{}px", x),
+            CssLength::Em(x) => write!(f, "{}em", x),
+        }
+    }
+}
+
+#[rustfmt::skip]
+pub fn length(input: &str) -> IResult<&str, CssLength> {
+    alt((
+        map(terminated(map_parser(is_a("-.0123456789"), float), tag("%")), CssLength::Percent),
+        map(terminated(map_parser(is_a("-.0123456789"), float), tag("px")), CssLength::Px),
+        map(terminated(map_parser(is_a("-.0123456789"), float), tag("em")), CssLength::Em),
+        map(tag("0"), |_| CssLength::Zero),
+    ))(input)
+}
+
+#[rustfmt::skip]
+pub fn font_shorthand(input: &str) -> IResult<&str, (Vec<&str>, CssLength, Option<f32>, Vec<&str>)> {
+    tuple((
+        many0(css_big_token(css_ident)),
+        css_big_token(length),
+        opt(preceded(stag("/"), css_big_token(float))),
+        separated_list1(stag(","), recognize(many1(css_big_token(css_ident)))),
+    ))(input)
+}
+
 #[test]
 #[rustfmt::skip]
 fn test_css_file() {
@@ -222,6 +289,9 @@ fn test_css_file() {
     assert_eq!(color_numeric("#A0b1C2"), Ok(("", Color32::from_rgba_unmultiplied(0xA0, 0xB1, 0xC2, 0xFF))));
     assert_eq!(color_numeric("#aBcD"), Ok(("", Color32::from_rgba_unmultiplied(0xAA, 0xBB, 0xCC, 0xDD))));
     assert_eq!(color_numeric("#AbC"), Ok(("", Color32::from_rgba_unmultiplied(0xAA, 0xBB, 0xCC, 0xFF))));
+
+    assert_eq!(CssLength::parse("-1em"), Some(CssLength::Em(-1.0)));
+    assert_eq!(CssLength::parse(".5em"), Some(CssLength::Em(0.5)));
 
     assert_eq!(css_ident("x{}"), Ok(("{}", "x")));
     assert_eq!(css_selector("x{}"), Ok(("{}", "x")));

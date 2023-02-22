@@ -1,9 +1,11 @@
 use eyre::eyre;
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{debug, instrument, trace, warn};
 
-use wbe_css_parser::{css_file, css_hash, css_ident, Combinator, ComplexSelector, RuleList};
+use wbe_css_parser::{
+    css_file, css_hash, css_ident, Combinator, ComplexSelector, CssLength, RuleList,
+};
 use wbe_dom::{
-    style::{CssBorder, CssColor, CssFontStyle, CssFontWeight, CssLength, CssQuad, CssWidth},
+    style::{CssBorder, CssColor, CssFont, CssFontStyle, CssFontWeight, CssQuad, CssWidth},
     Node, NodeType, Style,
 };
 
@@ -157,28 +159,47 @@ fn apply(
                         #[rustfmt::skip]
                         trbl!(style, node, name, value, border, left, CssBorder::parse_shorthand(value));
                     }
+                    "font" => {
+                        if value == "inherit" {
+                            style.font = parent_style.font.clone();
+                            continue;
+                        }
+                        if let Some((mut property, size)) = CssFont::parse_shorthand(value) {
+                            property.size = Some(
+                                size.resolve(parent_style.font_size(), parent_style.font_size()),
+                            );
+                            style.font = Some(property);
+                            continue;
+                        }
+                    }
                     "font-size" => {
-                        style.font_size = Some(
+                        let mut property = style.font.take().unwrap_or_else(|| CssFont::none());
+                        property.size = Some(
                             CssLength::parse(value).map_or(parent_style.font_size(), |x| {
                                 x.resolve(parent_style.font_size(), parent_style.font_size())
                             }),
                         );
+                        style.font = Some(property);
                         continue;
                     }
                     "font-weight" => {
-                        style.font_weight = match &**value {
-                            "normal" => Some(CssFontWeight::Normal),
-                            "bold" => Some(CssFontWeight::Bold),
-                            _ => style.font_weight,
-                        };
+                        let mut property = style.font.take().unwrap_or_else(|| CssFont::none());
+                        property.weight = Some(match &**value {
+                            "normal" => CssFontWeight::Normal,
+                            "bold" => CssFontWeight::Bold,
+                            _ => style.font_weight(),
+                        });
+                        style.font = Some(property);
                         continue;
                     }
                     "font-style" => {
-                        style.font_style = match &**value {
-                            "normal" => Some(CssFontStyle::Normal),
-                            "italic" => Some(CssFontStyle::Italic),
-                            _ => style.font_style,
-                        };
+                        let mut property = style.font.take().unwrap_or_else(|| CssFont::none());
+                        property.style = Some(match &**value {
+                            "normal" => CssFontStyle::Normal,
+                            "italic" => CssFontStyle::Italic,
+                            _ => style.font_style(),
+                        });
+                        style.font = Some(property);
                         continue;
                     }
                     "width" => {
@@ -188,7 +209,7 @@ fn apply(
                         };
                         continue;
                     }
-                    "background-color" => {
+                    "background" | "background-color" => {
                         if let Some(result) = CssColor::parse(value) {
                             // if ‘currentColor’, use self ‘color’
                             style.background_color = Some(result);
@@ -203,7 +224,7 @@ fn apply(
                         }
                     }
                     other => {
-                        warn!(node = %*node.data(), "unknown property {:?}", other);
+                        warn!(node = %*node.data(), "unknown property {:?} (value {:?})", other, value);
                         continue;
                     }
                 }
