@@ -143,6 +143,51 @@ fn apply(
                             continue;
                         }
                     }
+                    "border-width" => {
+                        if let Some(result) = CssQuad::parse_shorthand(value, CssLength::parse) {
+                            let mut property = style
+                                .border
+                                .take()
+                                .unwrap_or_else(|| CssQuad::one(CssBorder::none()));
+                            property.top = Some(property.top.unwrap_or_else(|| CssBorder::none()));
+                            property.right =
+                                Some(property.right.unwrap_or_else(|| CssBorder::none()));
+                            property.bottom =
+                                Some(property.bottom.unwrap_or_else(|| CssBorder::none()));
+                            property.left =
+                                Some(property.left.unwrap_or_else(|| CssBorder::none()));
+                            property.top.as_mut().unwrap().width = Some(result.top.unwrap());
+                            property.right.as_mut().unwrap().width = Some(result.right.unwrap());
+                            property.bottom.as_mut().unwrap().width = Some(result.bottom.unwrap());
+                            property.left.as_mut().unwrap().width = Some(result.left.unwrap());
+                            style.border = Some(property);
+                            debug!(node = %*node.data(), name, value);
+                            continue;
+                        }
+                    }
+                    "border-color" => {
+                        if let Some(result) = CssQuad::parse_shorthand(value, CssColor::parse) {
+                            let mut property = style
+                                .border
+                                .take()
+                                .unwrap_or_else(|| CssQuad::one(CssBorder::none()));
+                            property.top = Some(property.top.unwrap_or_else(|| CssBorder::none()));
+                            property.right =
+                                Some(property.right.unwrap_or_else(|| CssBorder::none()));
+                            property.bottom =
+                                Some(property.bottom.unwrap_or_else(|| CssBorder::none()));
+                            property.left =
+                                Some(property.left.unwrap_or_else(|| CssBorder::none()));
+                            property.top.as_mut().unwrap().color = Some(result.top.unwrap());
+                            property.right.as_mut().unwrap().color = Some(result.right.unwrap());
+                            property.bottom.as_mut().unwrap().color = Some(result.bottom.unwrap());
+                            property.left.as_mut().unwrap().color = Some(result.left.unwrap());
+                            dbg!(property);
+                            style.border = Some(property);
+                            debug!(node = %*node.data(), name, value);
+                            continue;
+                        }
+                    }
                     "border-top" => {
                         #[rustfmt::skip]
                         trbl!(style, node, name, value, border, top, CssBorder::parse_shorthand(value));

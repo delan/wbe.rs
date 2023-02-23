@@ -481,7 +481,7 @@ impl CssWidth {
 }
 
 impl CssBorder {
-    fn none() -> CssBorder {
+    pub fn none() -> CssBorder {
         Self {
             width: Some(CssLength::Zero),
             color: Some(CssColor::Other(Color32::from_rgb(255, 0, 255))),
