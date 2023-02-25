@@ -1,11 +1,16 @@
+#![feature(stmt_expr_attributes)]
+
 use eyre::eyre;
+use paste::paste;
 use tracing::{debug, instrument, trace, warn};
 
 use wbe_css_parser::{
     css_file, css_hash, css_ident, Combinator, ComplexSelector, CssLength, RuleList,
 };
 use wbe_dom::{
-    style::{CssBorder, CssColor, CssFont, CssFontStyle, CssFontWeight, CssQuad, CssWidth},
+    style::{
+        CssBorder, CssColor, CssFont, CssFontStyle, CssFontWeight, CssQuad, CssWidth, INITIAL_STYLE,
+    },
     Node, NodeType, Style,
 };
 
@@ -58,9 +63,7 @@ pub fn resolve_styles(dom_tree: &Node, rules: &RuleList) -> eyre::Result<()> {
 macro_rules! trbl {
     ($style:ident, $node:ident, $name:ident, $value:ident, $field:ident, $side:ident, $parse:expr) => {{
         if let Some(result) = $parse {
-            let mut property = $style.$field.unwrap_or_default();
-            property.$side = Some(result);
-            $style.$field = Some(property);
+            paste!(*$style.[<$field _mut>]().[<$side _mut>](INITIAL_STYLE.$field())) = result;
             debug!($node = %*$node.data(), $name, $value);
             continue;
         }
@@ -92,7 +95,7 @@ fn apply(
                     }
                     "margin" => {
                         if let Some(result) = CssQuad::parse_shorthand(value, CssLength::parse) {
-                            style.margin = Some(result);
+                            style.margin = result;
                             debug!(node = %*node.data(), name, value);
                             continue;
                         }
@@ -115,7 +118,7 @@ fn apply(
                     }
                     "padding" => {
                         if let Some(result) = CssQuad::parse_shorthand(value, CssLength::parse) {
-                            style.padding = Some(result);
+                            style.padding = result;
                             debug!(node = %*node.data(), name, value);
                             continue;
                         }
@@ -138,52 +141,29 @@ fn apply(
                     }
                     "border" => {
                         if let Some(result) = CssBorder::parse_shorthand(value) {
-                            style.border = Some(CssQuad::one(result));
+                            style.border = CssQuad::one(result);
                             debug!(node = %*node.data(), name, value);
                             continue;
                         }
                     }
                     "border-width" => {
+                        #[rustfmt::skip]
                         if let Some(result) = CssQuad::parse_shorthand(value, CssLength::parse) {
-                            let mut property = style
-                                .border
-                                .take()
-                                .unwrap_or_else(|| CssQuad::one(CssBorder::none()));
-                            property.top = Some(property.top.unwrap_or_else(|| CssBorder::none()));
-                            property.right =
-                                Some(property.right.unwrap_or_else(|| CssBorder::none()));
-                            property.bottom =
-                                Some(property.bottom.unwrap_or_else(|| CssBorder::none()));
-                            property.left =
-                                Some(property.left.unwrap_or_else(|| CssBorder::none()));
-                            property.top.as_mut().unwrap().width = Some(result.top.unwrap());
-                            property.right.as_mut().unwrap().width = Some(result.right.unwrap());
-                            property.bottom.as_mut().unwrap().width = Some(result.bottom.unwrap());
-                            property.left.as_mut().unwrap().width = Some(result.left.unwrap());
-                            style.border = Some(property);
+                            style.border_mut().top_mut(INITIAL_STYLE.border()).width = Some(*result.top_unwrap());
+                            style.border_mut().right_mut(INITIAL_STYLE.border()).width = Some(*result.right_unwrap());
+                            style.border_mut().bottom_mut(INITIAL_STYLE.border()).width = Some(*result.bottom_unwrap());
+                            style.border_mut().left_mut(INITIAL_STYLE.border()).width = Some(*result.left_unwrap());
                             debug!(node = %*node.data(), name, value);
                             continue;
                         }
                     }
                     "border-color" => {
+                        #[rustfmt::skip]
                         if let Some(result) = CssQuad::parse_shorthand(value, CssColor::parse) {
-                            let mut property = style
-                                .border
-                                .take()
-                                .unwrap_or_else(|| CssQuad::one(CssBorder::none()));
-                            property.top = Some(property.top.unwrap_or_else(|| CssBorder::none()));
-                            property.right =
-                                Some(property.right.unwrap_or_else(|| CssBorder::none()));
-                            property.bottom =
-                                Some(property.bottom.unwrap_or_else(|| CssBorder::none()));
-                            property.left =
-                                Some(property.left.unwrap_or_else(|| CssBorder::none()));
-                            property.top.as_mut().unwrap().color = Some(result.top.unwrap());
-                            property.right.as_mut().unwrap().color = Some(result.right.unwrap());
-                            property.bottom.as_mut().unwrap().color = Some(result.bottom.unwrap());
-                            property.left.as_mut().unwrap().color = Some(result.left.unwrap());
-                            dbg!(property);
-                            style.border = Some(property);
+                            style.border_mut().top_mut(INITIAL_STYLE.border()).color = Some(*result.top_unwrap());
+                            style.border_mut().right_mut(INITIAL_STYLE.border()).color = Some(*result.right_unwrap());
+                            style.border_mut().bottom_mut(INITIAL_STYLE.border()).color = Some(*result.bottom_unwrap());
+                            style.border_mut().left_mut(INITIAL_STYLE.border()).color = Some(*result.left_unwrap());
                             debug!(node = %*node.data(), name, value);
                             continue;
                         }

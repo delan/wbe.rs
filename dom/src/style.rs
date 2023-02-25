@@ -9,9 +9,9 @@ use wbe_css_parser::{color_numeric, font_shorthand, CssLength};
 lazy_static::lazy_static! {
     pub static ref INITIAL_STYLE: Style = Style {
         display: Some("inline".to_owned()),
-        margin: Some(CssQuad::one(CssLength::Zero)),
-        padding: Some(CssQuad::one(CssLength::Zero)),
-        border: Some(CssQuad::one(CssBorder::none())),
+        margin: CssQuad::one(CssLength::Zero),
+        padding: CssQuad::one(CssLength::Zero),
+        border: CssQuad::one(CssBorder::none()),
         font: Some(CssFont::initial()),
         width: Some(CssWidth::Auto),
         background_color: Some(CssColor::Other(Color32::TRANSPARENT)),
@@ -22,9 +22,9 @@ lazy_static::lazy_static! {
 #[derive(Debug, Clone)]
 pub struct Style {
     pub display: Option<String>,
-    pub margin: Option<CssQuad<CssLength>>,
-    pub padding: Option<CssQuad<CssLength>>,
-    pub border: Option<CssQuad<CssBorder>>,
+    pub margin: CssQuad<CssLength>,
+    pub padding: CssQuad<CssLength>,
+    pub border: CssQuad<CssBorder>,
     pub font: Option<CssFont>,
     pub width: Option<CssWidth>,
     pub background_color: Option<CssColor>,
@@ -38,11 +38,11 @@ pub enum CssColor {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CssQuad<T: Debug + Clone + Copy + PartialEq> {
-    pub top: Option<T>,
-    pub right: Option<T>,
-    pub bottom: Option<T>,
-    pub left: Option<T>,
+pub struct CssQuad<T: Debug + Clone + PartialEq> {
+    top: Option<T>,
+    right: Option<T>,
+    bottom: Option<T>,
+    left: Option<T>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -91,9 +91,9 @@ impl Style {
     pub fn empty() -> Self {
         Self {
             display: None,
-            margin: None,
-            padding: None,
-            border: None,
+            margin: CssQuad::default(),
+            padding: CssQuad::default(),
+            border: CssQuad::default(),
             font: None,
             width: None,
             background_color: None,
@@ -135,64 +135,102 @@ impl Style {
         }
     }
 
-    pub fn margin(&self) -> CssQuad<CssLength> {
-        self.get(|s| s.margin)
+    pub fn margin(&self) -> &CssQuad<CssLength> {
+        &self.margin
     }
 
-    pub fn margin_side(
-        &self,
-        getter: impl Fn(&CssQuad<CssLength>) -> Option<CssLength>,
-    ) -> CssLength {
-        getter(&self.get(|s| s.margin))
-            .unwrap_or_else(|| getter(&Self::initial().margin.unwrap()).unwrap())
+    pub fn margin_mut(&mut self) -> &mut CssQuad<CssLength> {
+        &mut self.margin
     }
 
-    pub fn padding(&self) -> CssQuad<CssLength> {
-        self.get(|s| s.padding)
+    pub fn margin_top(&self) -> CssLength {
+        *self.margin.top_unwrap_or(&Self::initial().margin)
     }
 
-    pub fn padding_side(
-        &self,
-        getter: impl Fn(&CssQuad<CssLength>) -> Option<CssLength>,
-    ) -> CssLength {
-        getter(&self.get(|s| s.padding))
-            .unwrap_or_else(|| getter(&Self::initial().padding.unwrap()).unwrap())
+    pub fn margin_right(&self) -> CssLength {
+        *self.margin.right_unwrap_or(&Self::initial().margin)
+    }
+
+    pub fn margin_bottom(&self) -> CssLength {
+        *self.margin.bottom_unwrap_or(&Self::initial().margin)
+    }
+
+    pub fn margin_left(&self) -> CssLength {
+        *self.margin.left_unwrap_or(&Self::initial().margin)
+    }
+
+    pub fn padding(&self) -> &CssQuad<CssLength> {
+        &self.padding
+    }
+
+    pub fn padding_mut(&mut self) -> &mut CssQuad<CssLength> {
+        &mut self.padding
+    }
+
+    pub fn padding_top(&self) -> CssLength {
+        *self.padding.top_unwrap_or(&Self::initial().padding)
+    }
+
+    pub fn padding_right(&self) -> CssLength {
+        *self.padding.right_unwrap_or(&Self::initial().padding)
+    }
+
+    pub fn padding_bottom(&self) -> CssLength {
+        *self.padding.bottom_unwrap_or(&Self::initial().padding)
+    }
+
+    pub fn padding_left(&self) -> CssLength {
+        *self.padding.left_unwrap_or(&Self::initial().padding)
+    }
+
+    pub fn border(&self) -> &CssQuad<CssBorder> {
+        &self.border
+    }
+
+    pub fn border_mut(&mut self) -> &mut CssQuad<CssBorder> {
+        &mut self.border
     }
 
     pub fn border_width(&self) -> CssQuad<CssLength> {
-        self.get(|s| s.border).flat_map(|x| x.width)
+        self.border.map(|x| x.width)
     }
 
     pub fn border_top_width(&self) -> CssLength {
-        self.get(|s| s.border_side(CssQuad::top).width)
+        self.border.top_map_or(&Self::initial().border, |b| b.width)
     }
 
     pub fn border_top_color(&self) -> CssColor {
-        self.get(|s| s.border_side(CssQuad::top).color)
+        self.border.top_map_or(&Self::initial().border, |b| b.color)
     }
 
     pub fn border_right_width(&self) -> CssLength {
-        self.get(|s| s.border_side(CssQuad::right).width)
+        self.border
+            .right_map_or(&Self::initial().border, |b| b.width)
     }
 
     pub fn border_right_color(&self) -> CssColor {
-        self.get(|s| s.border_side(CssQuad::right).color)
+        self.border
+            .right_map_or(&Self::initial().border, |b| b.color)
     }
 
     pub fn border_bottom_width(&self) -> CssLength {
-        self.get(|s| s.border_side(CssQuad::bottom).width)
+        self.border
+            .bottom_map_or(&Self::initial().border, |b| b.width)
     }
 
     pub fn border_bottom_color(&self) -> CssColor {
-        self.get(|s| s.border_side(CssQuad::bottom).color)
+        self.border
+            .bottom_map_or(&Self::initial().border, |b| b.color)
     }
 
     pub fn border_left_width(&self) -> CssLength {
-        self.get(|s| s.border_side(CssQuad::left).width)
+        self.border
+            .left_map_or(&Self::initial().border, |b| b.width)
     }
 
     pub fn border_left_color(&self) -> CssColor {
-        self.get(|s| s.border_side(CssQuad::left).color)
+        self.border
+            .left_map_or(&Self::initial().border, |b| b.color)
     }
 
     pub fn font_size(&self) -> f32 {
@@ -219,10 +257,12 @@ impl Style {
             CssWidth::Auto => percent_base,
             CssWidth::Length(x) => {
                 let margin_left = self
-                    .margin_side(CssQuad::left)
+                    .margin
+                    .left_unwrap_or(&Self::initial().margin)
                     .resolve(percent_base, font_size);
                 let padding_left = self
-                    .padding_side(CssQuad::left)
+                    .padding
+                    .left_unwrap_or(&Self::initial().padding)
                     .resolve(percent_base, font_size);
                 let border_left = self
                     .border_left_width()
@@ -233,10 +273,12 @@ impl Style {
                     .resolve_no_percent(font_size)
                     .unwrap_or(0.0);
                 let padding_right = self
-                    .padding_side(CssQuad::right)
+                    .padding
+                    .right_unwrap_or(&Self::initial().padding)
                     .resolve(percent_base, font_size);
                 let margin_right = self
-                    .margin_side(CssQuad::right)
+                    .margin
+                    .right_unwrap_or(&Self::initial().margin)
                     .resolve(percent_base, font_size);
 
                 x.resolve(percent_base, font_size)
@@ -260,11 +302,6 @@ impl Style {
 
     fn get<T>(&self, getter: impl Fn(&Self) -> Option<T>) -> T {
         getter(self).unwrap_or_else(|| getter(Self::initial()).unwrap())
-    }
-
-    fn border_side(&self, getter: impl Fn(&CssQuad<CssBorder>) -> Option<CssBorder>) -> CssBorder {
-        getter(&self.get(|s| s.border))
-            .unwrap_or_else(|| getter(&Self::initial().border.unwrap()).unwrap())
     }
 }
 
@@ -328,31 +365,35 @@ impl CssColor {
     }
 }
 
-impl<T: Debug + Clone + Copy + PartialEq> CssQuad<T> {
-    pub fn one(all: impl Into<Option<T>> + Copy) -> Self {
-        Self::four(all, all, all, all)
+impl<T: Debug + Clone + PartialEq> CssQuad<T> {
+    pub fn one(all: impl Into<Option<T>>) -> Self {
+        let all = all.into();
+
+        Self::four(all.clone(), all.clone(), all.clone(), all)
     }
 
-    pub fn two(
-        vertical: impl Into<Option<T>> + Copy,
-        horizontal: impl Into<Option<T>> + Copy,
-    ) -> Self {
-        Self::four(vertical, horizontal, vertical, horizontal)
+    pub fn two(vertical: impl Into<Option<T>>, horizontal: impl Into<Option<T>>) -> Self {
+        let vertical = vertical.into();
+        let horizontal = horizontal.into();
+
+        Self::four(vertical.clone(), horizontal.clone(), vertical, horizontal)
     }
 
     pub fn three(
-        top: impl Into<Option<T>> + Copy,
-        horizontal: impl Into<Option<T>> + Copy,
-        bottom: impl Into<Option<T>> + Copy,
+        top: impl Into<Option<T>>,
+        horizontal: impl Into<Option<T>>,
+        bottom: impl Into<Option<T>>,
     ) -> Self {
-        Self::four(top, horizontal, bottom, horizontal)
+        let horizontal = horizontal.into();
+
+        Self::four(top, horizontal.clone(), bottom, horizontal)
     }
 
     pub fn four(
-        top: impl Into<Option<T>> + Copy,
-        right: impl Into<Option<T>> + Copy,
-        bottom: impl Into<Option<T>> + Copy,
-        left: impl Into<Option<T>> + Copy,
+        top: impl Into<Option<T>>,
+        right: impl Into<Option<T>>,
+        bottom: impl Into<Option<T>>,
+        left: impl Into<Option<T>>,
     ) -> Self {
         Self {
             top: top.into(),
@@ -362,32 +403,148 @@ impl<T: Debug + Clone + Copy + PartialEq> CssQuad<T> {
         }
     }
 
-    pub fn top(&self) -> Option<T> {
-        self.top
+    pub fn top_unwrap(&self) -> &T {
+        self.top.as_ref().unwrap()
     }
 
-    pub fn right(&self) -> Option<T> {
-        self.right
+    pub fn right_unwrap(&self) -> &T {
+        self.right.as_ref().unwrap()
     }
 
-    pub fn bottom(&self) -> Option<T> {
+    pub fn bottom_unwrap(&self) -> &T {
+        self.bottom.as_ref().unwrap()
+    }
+
+    pub fn left_unwrap(&self) -> &T {
+        self.left.as_ref().unwrap()
+    }
+
+    pub fn top_unwrap_or(&self, initial: &'static Self) -> &T {
+        self.top.as_ref().unwrap_or(initial.top.as_ref().unwrap())
+    }
+
+    pub fn right_unwrap_or(&self, initial: &'static Self) -> &T {
+        self.right.as_ref().unwrap_or(initial.top.as_ref().unwrap())
+    }
+
+    pub fn bottom_unwrap_or(&self, initial: &'static Self) -> &T {
         self.bottom
+            .as_ref()
+            .unwrap_or(initial.top.as_ref().unwrap())
     }
 
-    pub fn left(&self) -> Option<T> {
-        self.left
+    pub fn left_unwrap_or(&self, initial: &'static Self) -> &T {
+        self.left.as_ref().unwrap_or(initial.top.as_ref().unwrap())
     }
 
-    pub fn flat_map<U: Debug + Clone + Copy + PartialEq>(
+    pub fn top_mut(&mut self, initial: &'static Self) -> &mut T {
+        if self.top.is_none() {
+            self.top = initial.top.clone();
+        }
+
+        self.top.as_mut().unwrap()
+    }
+
+    pub fn right_mut(&mut self, initial: &'static Self) -> &mut T {
+        if self.right.is_none() {
+            self.right = initial.right.clone();
+        }
+
+        self.right.as_mut().unwrap()
+    }
+
+    pub fn bottom_mut(&mut self, initial: &'static Self) -> &mut T {
+        if self.bottom.is_none() {
+            self.bottom = initial.bottom.clone();
+        }
+
+        self.bottom.as_mut().unwrap()
+    }
+
+    pub fn left_mut(&mut self, initial: &'static Self) -> &mut T {
+        if self.left.is_none() {
+            self.left = initial.left.clone();
+        }
+
+        self.left.as_mut().unwrap()
+    }
+
+    pub fn map<U: Debug + Clone + PartialEq>(&self, f: impl Fn(&T) -> Option<U>) -> CssQuad<U> {
+        CssQuad::four(
+            self.top.as_ref().map(&f).flatten(),
+            self.right.as_ref().map(&f).flatten(),
+            self.bottom.as_ref().map(&f).flatten(),
+            self.left.as_ref().map(&f).flatten(),
+        )
+    }
+
+    pub fn map_or<U: Debug + Clone + PartialEq>(
         &self,
-        f: impl Fn(T) -> Option<U>,
+        initial: &Self,
+        f: impl Fn(&T) -> Option<U>,
     ) -> CssQuad<U> {
         CssQuad::four(
-            self.top.map(&f).flatten(),
-            self.right.map(&f).flatten(),
-            self.bottom.map(&f).flatten(),
-            self.left.map(&f).flatten(),
+            self.top
+                .as_ref()
+                .map_or_else(|| f(initial.top_unwrap()), &f),
+            self.right
+                .as_ref()
+                .map_or_else(|| f(initial.right_unwrap()), &f),
+            self.bottom
+                .as_ref()
+                .map_or_else(|| f(initial.bottom_unwrap()), &f),
+            self.left
+                .as_ref()
+                .map_or_else(|| f(initial.left_unwrap()), &f),
         )
+    }
+
+    pub fn top_map_or<U: Debug + Clone + PartialEq>(
+        &self,
+        initial: &Self,
+        f: impl Fn(&T) -> Option<U>,
+    ) -> U {
+        self.top
+            .as_ref()
+            .map(&f)
+            .flatten()
+            .unwrap_or_else(|| f(initial.top.as_ref().unwrap()).unwrap())
+    }
+
+    pub fn right_map_or<U: Debug + Clone + PartialEq>(
+        &self,
+        initial: &Self,
+        f: impl Fn(&T) -> Option<U>,
+    ) -> U {
+        self.right
+            .as_ref()
+            .map(&f)
+            .flatten()
+            .unwrap_or_else(|| f(initial.right.as_ref().unwrap()).unwrap())
+    }
+
+    pub fn bottom_map_or<U: Debug + Clone + PartialEq>(
+        &self,
+        initial: &Self,
+        f: impl Fn(&T) -> Option<U>,
+    ) -> U {
+        self.bottom
+            .as_ref()
+            .map(&f)
+            .flatten()
+            .unwrap_or_else(|| f(initial.bottom.as_ref().unwrap()).unwrap())
+    }
+
+    pub fn left_map_or<U: Debug + Clone + PartialEq>(
+        &self,
+        initial: &Self,
+        f: impl Fn(&T) -> Option<U>,
+    ) -> U {
+        self.left
+            .as_ref()
+            .map(&f)
+            .flatten()
+            .unwrap_or_else(|| f(initial.left.as_ref().unwrap()).unwrap())
     }
 
     pub fn parse_shorthand(value: &str, parser: impl Fn(&str) -> Option<T>) -> Option<Self> {
@@ -558,39 +715,28 @@ impl Display for CssBorder {
     }
 }
 
-impl<T: Debug + Clone + Copy + PartialEq + Display> Display for CssQuad<T> {
+impl<T: Debug + Clone + PartialEq + Display> Display for CssQuad<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut t = f.debug_tuple("quad");
-        if let Some(x) = self.top {
+        if let Some(x) = self.top.as_ref() {
             t.field(&format_args!("{}", x));
         } else {
             t.field(&format_args!("unset"));
         }
-        if let Some(x) = self.right {
+        if let Some(x) = self.right.as_ref() {
             t.field(&format_args!("{}", x));
         } else {
             t.field(&format_args!("unset"));
         }
-        if let Some(x) = self.bottom {
+        if let Some(x) = self.bottom.as_ref() {
             t.field(&format_args!("{}", x));
         } else {
             t.field(&format_args!("unset"));
         }
-        if let Some(x) = self.left {
+        if let Some(x) = self.left.as_ref() {
             t.field(&format_args!("{}", x));
         } else {
             t.field(&format_args!("unset"));
-        }
-
-        t.finish()
-    }
-}
-
-impl Display for Style {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut t = f.debug_struct("style");
-        if let Some(x) = self.border {
-            t.field("border", &format_args!("{}", x));
         }
 
         t.finish()

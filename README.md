@@ -90,3 +90,20 @@ this project loosely implements the [Web Browser Engineering](https://browser.en
     * [ ] exercise: table of contents (hardcoded nav#toc style)
     * [ ] exercise: anonymous block boxes
     * [ ] exercise: run-ins (presentational hints for h6)
+* [x] chapter 6: applying user styles
+    * [ ] the style attribute
+    * [x] applying style sheets
+        * [ ] \<link rel=stylesheet>
+    * [ ] cascading
+    * [x] inherited styles
+    * [ ] exercise: fonts
+    * [x] exercise: width
+    * [ ] exercise: height
+    * [x] exercise: class selectors
+    * [x] exercise: display
+    * [x] exercise: shorthand properties
+    * [x] exercise: fast descendant selectors
+    * [x] exercise: selector sequences (compound selectors)
+    * [ ] exercise: important
+    * [ ] exercise: ancestor selectors
+    * [x] exercise: inline style sheets

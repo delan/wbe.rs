@@ -24,7 +24,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use wbe_core::{dump_backtrace, FONTS};
 use wbe_dom::{
     style::{CssDisplay, CssFontStyle, CssFontWeight, CssQuad},
-    Node, NodeType,
+    Node, NodeType, Style,
 };
 use wbe_html_lexer::{html_word, HtmlWord};
 
@@ -110,15 +110,17 @@ impl Layout {
             display_list: vec![],
             rect: Rect::NAN,
 
-            margin: style
-                .margin()
-                .flat_map(|x| Some(x.resolve(available, font_size))),
+            margin: style.margin().map_or(Style::initial().margin(), |x| {
+                Some(x.resolve(available, font_size))
+            }),
             border: style
                 .border_width()
-                .flat_map(|x| x.resolve_no_percent(font_size)),
-            padding: style
-                .padding()
-                .flat_map(|x| Some(x.resolve(available, font_size))),
+                .map_or(&Style::initial().border_width(), |x| {
+                    x.resolve_no_percent(font_size)
+                }),
+            padding: style.padding().map_or(Style::initial().padding(), |x| {
+                Some(x.resolve(available, font_size))
+            }),
         })))
     }
 
@@ -226,17 +228,17 @@ impl Layout {
             if self.node().is_some() {
                 let mut rect = self.read().rect;
                 let margin_rect = rect;
-                rect.set_top(rect.top() + self.read().margin.top().unwrap());
-                rect.set_left(rect.left() + self.read().margin.left().unwrap());
-                rect.set_right(rect.right() - self.read().margin.right().unwrap());
+                rect.set_top(rect.top() + self.read().margin.top_unwrap());
+                rect.set_left(rect.left() + self.read().margin.left_unwrap());
+                rect.set_right(rect.right() - self.read().margin.right_unwrap());
                 let border_rect = rect;
-                rect.set_top(rect.top() + self.read().border.top().unwrap());
-                rect.set_left(rect.left() + self.read().border.left().unwrap());
-                rect.set_right(rect.right() - self.read().border.right().unwrap());
+                rect.set_top(rect.top() + self.read().border.top_unwrap());
+                rect.set_left(rect.left() + self.read().border.left_unwrap());
+                rect.set_right(rect.right() - self.read().border.right_unwrap());
                 let padding_rect = rect;
-                rect.set_top(rect.top() + self.read().padding.top().unwrap());
-                rect.set_left(rect.left() + self.read().padding.left().unwrap());
-                rect.set_right(rect.right() - self.read().padding.right().unwrap());
+                rect.set_top(rect.top() + self.read().padding.top_unwrap());
+                rect.set_left(rect.left() + self.read().padding.left_unwrap());
+                rect.set_right(rect.right() - self.read().padding.right_unwrap());
                 let content_rect = rect;
 
                 (margin_rect, padding_rect, border_rect, content_rect)
@@ -318,12 +320,12 @@ impl Layout {
                 }
                 if let Some(node) = node {
                     let available = layout.read().rect.width();
-                    let margin_left = layout.read().margin.left();
-                    let border_left = layout.read().border.left();
-                    let padding_left = layout.read().padding.left();
-                    let padding_right = layout.read().padding.right();
-                    let border_right = layout.read().border.right();
-                    let margin_right = layout.read().margin.right();
+                    let margin_left = *layout.read().margin.left_unwrap();
+                    let border_left = *layout.read().border.left_unwrap();
+                    let padding_left = *layout.read().padding.left_unwrap();
+                    let padding_right = *layout.read().padding.right_unwrap();
+                    let border_right = *layout.read().border.right_unwrap();
+                    let margin_right = *layout.read().margin.right_unwrap();
                     debug!(
                         node = %*node.data(),
                         width = ?node.data().style().width,
@@ -357,9 +359,9 @@ impl Layout {
             }
         }
 
-        padding_rect.set_bottom(content_rect.bottom() + self.read().padding.bottom().unwrap());
-        border_rect.set_bottom(padding_rect.bottom() + self.read().border.bottom().unwrap());
-        margin_rect.set_bottom(border_rect.bottom() + self.read().margin.bottom().unwrap());
+        padding_rect.set_bottom(content_rect.bottom() + self.read().padding.bottom_unwrap());
+        border_rect.set_bottom(padding_rect.bottom() + self.read().border.bottom_unwrap());
+        margin_rect.set_bottom(border_rect.bottom() + self.read().margin.bottom_unwrap());
         self.write().rect.set_bottom(margin_rect.bottom());
 
         if let Some(node) = self.node() {

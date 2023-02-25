@@ -2787,6 +2787,7 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "eyre",
+ "paste",
  "tracing",
  "wbe-css-parser",
  "wbe-dom",
