@@ -5,7 +5,7 @@ use nom::{
     branch::alt,
     bytes::complete::{is_a, tag, take, take_until, take_while, take_while1},
     character::complete::{alpha1, anychar, one_of},
-    combinator::{fail, map, map_parser, opt, peek, recognize},
+    combinator::{eof, fail, map, map_parser, opt, peek, recognize},
     multi::{count, many0, many1, many_till, separated_list0, separated_list1},
     number::complete::float,
     sequence::{preceded, separated_pair, terminated, tuple},
@@ -134,7 +134,13 @@ pub fn css_declaration_list(input: &str) -> IResult<&str, DeclarationList> {
             separated_pair(
                 own(css_big_token(css_ident)),
                 css_big_token(move |i| tag(":")(i)),
-                own(|i| recognize(many_till(anychar, tuple((opt(css_space), peek(one_of(";}"))))))(i)),
+                own(|i| recognize(many_till(anychar, tuple((
+                    opt(css_space),
+                    peek(alt((
+                        recognize(one_of(";}")),
+                        eof,
+                    ))),
+                ))))(i)),
             ),
         ),
         many0(alt((tag(";"), css_space))),
