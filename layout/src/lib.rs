@@ -354,9 +354,9 @@ impl Layout {
             let nodes = self.inlines().to_owned();
             for node in nodes {
                 self.recurse(node.clone(), dc, &mut ic)?;
-                self.flush(dc, &mut ic)?;
-                content_rect.set_bottom(ic.cursor.y);
             }
+            self.flush(dc, &mut ic)?;
+            content_rect.set_bottom(ic.cursor.y);
         }
 
         padding_rect.set_bottom(content_rect.bottom() + self.read().padding.bottom_unwrap());
