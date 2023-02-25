@@ -5,12 +5,14 @@ use std::{fmt::Debug, mem::swap, str};
 
 use backtrace::Backtrace;
 use egui::{Align2, Color32, Ui, Vec2};
+use eyre::bail;
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use wbe_core::dump_backtrace;
 use wbe_dom::{Node, NodeData, OwnedNode};
 use wbe_html_parser::parse_html;
+use wbe_http::{request, Url};
 use wbe_layout::Paint;
 use wbe_layout::{viewport::ViewportInfo, Layout, OwnedLayout};
 use wbe_style::{parse_css_file, resolve_styles};
@@ -128,7 +130,8 @@ impl OwnedDocument {
 
     #[instrument]
     fn load(location: String) -> eyre::Result<OwnedDocument> {
-        let body = match wbe_http::request(&location) {
+        let url = Url::new(&location, None)?;
+        let body = match wbe_http::request(&url) {
             Ok((200 | 204, _headers, body)) => body,
             Ok((status, _headers, _body)) => format!("<h1>[http {}]</h1>", status).into_bytes(),
             Err(error) => format!("<h1>[network error]</h1>{}", error).into_bytes(),
@@ -158,7 +161,40 @@ impl OwnedDocument {
         // start with ua styles
         let mut css_rules = parse_css_file(include_str!("html.css"))?;
 
-        // then add author styles
+        // then add external author styles
+        for node in dom.descendants().filter(|x| {
+            &*x.name() == "link"
+                && x.attr("rel")
+                    .filter(|x| {
+                        x.split_ascii_whitespace()
+                            .filter(|x| x.eq_ignore_ascii_case("stylesheet"))
+                            .count()
+                            > 0
+                    })
+                    .is_some()
+        }) {
+            if let Some(href) = node.attr("href") {
+                fn request_link(href: &str, base: &str) -> eyre::Result<String> {
+                    let base = Url::new(base, None)?;
+                    let url = Url::new(&href, Some(&base))?;
+                    let body = match request(&url) {
+                        Ok((200, _headers, body)) => body,
+                        Ok((status, _headers, _body)) => bail!("http {}: {}", status, href),
+                        Err(error) => return Err(error),
+                    };
+
+                    // TODO: hard-coding utf-8 is not correct in practice
+                    Ok(str::from_utf8(&body)?.to_owned())
+                }
+
+                match request_link(&href, &location) {
+                    Ok(text) => css_rules.append(&mut parse_css_file(&text)?),
+                    Err(error) => error!("stylesheet request failed: {}: {}", *href, error),
+                }
+            }
+        }
+
+        // then add internal author styles
         for node in dom.descendants().filter(|x| &*x.name() == "style") {
             css_rules.append(&mut parse_css_file(&node.text_content())?);
         }
