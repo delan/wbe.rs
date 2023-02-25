@@ -91,7 +91,7 @@ this project loosely implements the [Web Browser Engineering](https://browser.en
     * [ ] exercise: anonymous block boxes
     * [ ] exercise: run-ins (presentational hints for h6)
 * [x] chapter 6: applying user styles
-    * [ ] the style attribute
+    * [x] the style attribute
     * [x] applying style sheets
         * [ ] \<link rel=stylesheet>
     * [ ] cascading

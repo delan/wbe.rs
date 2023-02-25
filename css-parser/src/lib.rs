@@ -124,16 +124,9 @@ pub fn css_selector_list(input: &str) -> IResult<&str, SelectorList> {
     )(input)
 }
 
-pub type Declaration<'s> = (String, String);
-pub type DeclarationList<'s> = Vec<Declaration<'s>>;
-pub type Rule<'s> = (SelectorList<'s>, DeclarationList<'s>);
 #[rustfmt::skip]
-pub fn css_rule(input: &str) -> IResult<&str, (SelectorList, DeclarationList)> {
-    let (rest, (selectors, _, _, _, declarations, _, _)) = tuple((
-        css_selector_list,
-        opt(css_space),
-        tag("{"),
-        opt(css_space),
+pub fn css_declaration_list(input: &str) -> IResult<&str, DeclarationList> {
+    terminated(
         separated_list0(
             // Copy not implemented on returned closures
             // https://github.com/rust-lang/rust/issues/68307
@@ -145,6 +138,18 @@ pub fn css_rule(input: &str) -> IResult<&str, (SelectorList, DeclarationList)> {
             ),
         ),
         many0(alt((tag(";"), css_space))),
+    )(input)
+}
+
+pub type Declaration<'s> = (String, String);
+pub type DeclarationList<'s> = Vec<Declaration<'s>>;
+pub type Rule<'s> = (SelectorList<'s>, DeclarationList<'s>);
+#[rustfmt::skip]
+pub fn css_rule(input: &str) -> IResult<&str, (SelectorList, DeclarationList)> {
+    let (rest, (selectors, _, declarations, _)) = tuple((
+        css_selector_list,
+        stag("{"),
+        css_declaration_list,
         tag("}"),
     ))(input)?;
 
