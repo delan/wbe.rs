@@ -285,6 +285,11 @@ fn apply_declarations(
                 }
             }
             "background" | "background-color" => {
+                // TODO implement rest of shorthand
+                let value = match value.as_ref() {
+                    "none" => "transparent",
+                    other => other,
+                };
                 if let Some(result) = CssColor::parse(value) {
                     // if ‘currentColor’, use self ‘color’
                     style.background_color = Some(result);
