@@ -461,6 +461,7 @@ impl Layout {
     ) -> eyre::Result<()> {
         assert_eq!(node.r#type(), NodeType::Text);
         let style = node.data().style();
+        let font_size = style.font_size();
         let font = FontInfo::new(
             FontFamily::Name(match (style.font_weight(), style.font_style()) {
                 (CssFontWeight::Normal, CssFontStyle::Normal) => FONTS[0].0.into(),
@@ -474,7 +475,7 @@ impl Layout {
                 (CssFontWeight::Normal, CssFontStyle::Italic) => FONTS[2].1,
                 (CssFontWeight::Bold, CssFontStyle::Italic) => FONTS[3].1,
             },
-            style.font_size(),
+            font_size,
             dc.viewport.scale,
         )?;
         let rect = self.read().rect;
@@ -498,12 +499,14 @@ impl Layout {
                     / dc.viewport.scale;
                 let ascent = font.ab.ascent() / dc.viewport.scale;
                 let height = font.ab.height() / dc.viewport.scale;
+                let line_height = style.line_height().resolve(font_size);
+                let half_leading = line_height - font_size;
                 if ic.cursor.x + advance > rect.max.x {
                     // trace!(cursor = ?context.cursor, advance, max_x = rect.max.x);
                     self.flush(dc, ic)?;
                 }
-                ic.max_ascent = ic.max_ascent.max(ascent);
-                ic.max_height = ic.max_height.max(height);
+                ic.max_ascent = ic.max_ascent.max(ascent + half_leading);
+                ic.max_height = ic.max_height.max(line_height);
                 let rect = Rect::from_min_size(ic.cursor, vec2(advance, height));
                 ic.line_display_list.push(Paint::Text(
                     rect,

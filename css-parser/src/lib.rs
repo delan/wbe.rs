@@ -284,11 +284,11 @@ pub fn length(input: &str) -> IResult<&str, CssLength> {
 }
 
 #[rustfmt::skip]
-pub fn font_shorthand(input: &str) -> IResult<&str, (Vec<&str>, CssLength, Option<f32>, Vec<&str>)> {
+pub fn font_shorthand(input: &str) -> IResult<&str, (Vec<&str>, CssLength, Option<&str>, Vec<&str>)> {
     tuple((
         many0(css_big_token(css_ident)),
         css_big_token(length),
-        opt(preceded(stag("/"), css_big_token(float))),
+        opt(preceded(stag("/"), recognize(many_till(anychar, peek(css_space))))),
         separated_list1(stag(","), recognize(many1(css_big_token(css_ident)))),
     ))(input)
 }

@@ -10,8 +10,8 @@ use wbe_css_parser::{
 };
 use wbe_dom::{
     style::{
-        CssBorder, CssColor, CssFont, CssFontStyle, CssFontWeight, CssHeight, CssQuad,
-        CssTextAlign, CssWidth, INITIAL_STYLE,
+        CssBorder, CssColor, CssFont, CssFontStyle, CssFontWeight, CssHeight, CssLineHeight,
+        CssQuad, CssTextAlign, CssWidth, INITIAL_STYLE,
     },
     Node, NodeType, Style,
 };
@@ -252,6 +252,15 @@ fn apply_declarations(
                     property.size =
                         Some(size.resolve(parent_style.font_size(), parent_style.font_size()));
                     style.font = Some(property);
+                    continue;
+                }
+            }
+            "line-height" => {
+                if let Some(result) = CssLineHeight::parse(value) {
+                    let mut property = style.font.take().unwrap_or_else(|| CssFont::none());
+                    property.line_height = Some(result);
+                    style.font = Some(property);
+                    debug!(node = %*node.data(), name, value);
                     continue;
                 }
             }

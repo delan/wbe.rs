@@ -1,4 +1,5 @@
 use std::fmt::{Debug, Display};
+use std::str::FromStr;
 
 use egui::Color32;
 
@@ -67,7 +68,7 @@ pub enum CssTextAlign {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CssFont {
-    pub line_height: Option<f32>,
+    pub line_height: Option<CssLineHeight>,
     pub size: Option<f32>,
     pub family: Option<Vec<String>>,
     pub style: Option<CssFontStyle>,
@@ -95,6 +96,13 @@ pub enum CssWidth {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CssHeight {
     Auto,
+    Length(CssLength),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CssLineHeight {
+    Normal,
+    Number(f32),
     Length(CssLength),
 }
 
@@ -255,6 +263,12 @@ impl Style {
 
     pub fn text_align(&self) -> CssTextAlign {
         self.get(|s| s.text_align)
+    }
+
+    pub fn line_height(&self) -> CssLineHeight {
+        let result = self.get(|s| s.font.as_ref().map(|f| f.line_height));
+
+        result.unwrap_or_else(|| Self::initial().font.as_ref().unwrap().line_height.unwrap())
     }
 
     pub fn font_size(&self) -> f32 {
@@ -615,7 +629,7 @@ impl<T: Debug + Copy + Clone + PartialEq> Default for CssQuad<T> {
 impl CssFont {
     fn initial() -> Self {
         Self {
-            line_height: Some(1.25),
+            line_height: Some(CssLineHeight::Normal),
             size: Some(FONT_SIZE),
             family: Some(vec!["serif".to_owned()]),
             style: Some(CssFontStyle::Normal),
@@ -647,7 +661,13 @@ impl CssFont {
                     _ => return None,
                 }
             }
-            result.line_height = line_height;
+            if let Some(line_height) = line_height {
+                if let Some(line_height) = CssLineHeight::parse(line_height) {
+                    result.line_height = Some(line_height);
+                } else {
+                    return None;
+                }
+            }
             result.family = Some(family.into_iter().map(|x| x.to_owned()).collect());
             return Some((result, size));
         }
@@ -684,6 +704,29 @@ impl CssHeight {
         match self {
             Self::Auto | Self::Length(CssLength::Percent(_)) => None,
             Self::Length(x) => x.resolve_no_percent(em_base),
+        }
+    }
+}
+
+impl CssLineHeight {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "normal" => Some(Self::Normal),
+            other => {
+                if let Ok(number) = f32::from_str(dbg!(other)) {
+                    Some(Self::Number(number))
+                } else {
+                    CssLength::parse(other).map(Self::Length)
+                }
+            }
+        }
+    }
+
+    pub fn resolve(&self, font_size: f32) -> f32 {
+        match self {
+            Self::Normal => 1.25 * font_size,
+            Self::Number(x) => x * font_size,
+            Self::Length(x) => x.resolve(font_size, font_size),
         }
     }
 }
