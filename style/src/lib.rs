@@ -9,7 +9,8 @@ use wbe_css_parser::{
 };
 use wbe_dom::{
     style::{
-        CssBorder, CssColor, CssFont, CssFontStyle, CssFontWeight, CssQuad, CssWidth, INITIAL_STYLE,
+        CssBorder, CssColor, CssFont, CssFontStyle, CssFontWeight, CssHeight, CssQuad, CssWidth,
+        INITIAL_STYLE,
     },
     Node, NodeType, Style,
 };
@@ -228,11 +229,18 @@ fn apply(
                         continue;
                     }
                     "width" => {
-                        style.width = match &**value {
-                            "auto" => Some(CssWidth::Auto),
-                            other => CssLength::parse(other).map(CssWidth::Length),
-                        };
-                        continue;
+                        if let Some(result) = CssWidth::parse(value) {
+                            style.width = Some(result);
+                            debug!(node = %*node.data(), name, value);
+                            continue;
+                        }
+                    }
+                    "height" => {
+                        if let Some(result) = CssHeight::parse(value) {
+                            style.height = Some(result);
+                            debug!(node = %*node.data(), name, value);
+                            continue;
+                        }
                     }
                     "background" | "background-color" => {
                         if let Some(result) = CssColor::parse(value) {

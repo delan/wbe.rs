@@ -14,6 +14,7 @@ lazy_static::lazy_static! {
         border: CssQuad::one(CssBorder::none()),
         font: Some(CssFont::initial()),
         width: Some(CssWidth::Auto),
+        height: Some(CssHeight::Auto),
         background_color: Some(CssColor::Other(Color32::TRANSPARENT)),
         color: Some(Color32::BLACK),
     };
@@ -27,6 +28,7 @@ pub struct Style {
     pub border: CssQuad<CssBorder>,
     pub font: Option<CssFont>,
     pub width: Option<CssWidth>,
+    pub height: Option<CssHeight>,
     pub background_color: Option<CssColor>,
     pub color: Option<Color32>,
 }
@@ -82,6 +84,12 @@ pub enum CssWidth {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CssHeight {
+    Auto,
+    Length(CssLength),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CssBorder {
     pub width: Option<CssLength>,
     pub color: Option<CssColor>,
@@ -96,6 +104,7 @@ impl Style {
             border: CssQuad::default(),
             font: None,
             width: None,
+            height: None,
             background_color: None,
             color: None,
         }
@@ -290,6 +299,10 @@ impl Style {
                     + margin_right
             }
         }
+    }
+
+    pub fn box_height(&self) -> Option<f32> {
+        self.get(|s| s.height).resolve(self.font_size())
     }
 
     pub fn background_color(&self) -> CssColor {
@@ -629,10 +642,33 @@ impl CssFont {
 }
 
 impl CssWidth {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "auto" => Some(Self::Auto),
+            other => CssLength::parse(other).map(Self::Length),
+        }
+    }
+
     pub fn resolve(&self, percent_base: f32, em_base: f32) -> f32 {
         match self {
-            CssWidth::Auto => percent_base,
-            CssWidth::Length(x) => x.resolve(percent_base, em_base),
+            Self::Auto => percent_base,
+            Self::Length(x) => x.resolve(percent_base, em_base),
+        }
+    }
+}
+
+impl CssHeight {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "auto" => Some(Self::Auto),
+            other => CssLength::parse(other).map(Self::Length),
+        }
+    }
+
+    pub fn resolve(&self, em_base: f32) -> Option<f32> {
+        match self {
+            Self::Auto | Self::Length(CssLength::Percent(_)) => None,
+            Self::Length(x) => x.resolve_no_percent(em_base),
         }
     }
 }

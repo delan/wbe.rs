@@ -98,7 +98,7 @@ this project loosely implements the [Web Browser Engineering](https://browser.en
     * [x] inherited styles
     * [ ] exercise: fonts
     * [x] exercise: width
-    * [ ] exercise: height
+    * [x] exercise: height
     * [x] exercise: class selectors
     * [x] exercise: display
     * [x] exercise: shorthand properties

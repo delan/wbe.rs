@@ -267,15 +267,15 @@ impl Layout {
             if Self::is_block_level(&child) {
                 if !inlines.is_empty() {
                     let layout = Self::anonymous(inlines.drain(..));
-                    trace!(box_child = %*child.data(), before = ?layout);
+                    debug!(box_child = %*child.data(), before = ?layout);
                     boxes.push(layout);
                 } else {
-                    trace!(box_child = %*child.data());
+                    debug!(box_child = %*child.data());
                 }
                 let layout = Self::with_node(child, self.read().rect.width());
                 boxes.push(layout);
             } else if !Self::is_skippable(&child) {
-                trace!(line_child = %*child.data());
+                debug!(line_child = %*child.data());
                 inlines.push(child);
             }
         }
@@ -326,7 +326,7 @@ impl Layout {
                     let padding_right = *layout.read().padding.right_unwrap();
                     let border_right = *layout.read().border.right_unwrap();
                     let margin_right = *layout.read().margin.right_unwrap();
-                    debug!(
+                    trace!(
                         node = %*node.data(),
                         width = ?node.data().style().width,
                         available,
@@ -359,6 +359,12 @@ impl Layout {
             content_rect.set_bottom(ic.cursor.y);
         }
 
+        if let Some(node) = self.node() {
+            if let Some(height) = node.data().style().box_height() {
+                trace!(node = %*node.data(), height);
+                content_rect.set_bottom(content_rect.top() + height);
+            }
+        }
         padding_rect.set_bottom(content_rect.bottom() + self.read().padding.bottom_unwrap());
         border_rect.set_bottom(padding_rect.bottom() + self.read().border.bottom_unwrap());
         margin_rect.set_bottom(border_rect.bottom() + self.read().margin.bottom_unwrap());
