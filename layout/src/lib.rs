@@ -44,6 +44,7 @@ pub struct OwnedLayout {
     margin: CssQuad<f32>,
     border: CssQuad<f32>,
     padding: CssQuad<f32>,
+    text_align: CssTextAlign,
 }
 
 struct DocumentContext<'v, 'p> {
@@ -81,7 +82,7 @@ impl Debug for Layout {
 }
 
 impl Layout {
-    pub fn anonymous(nodes: impl IntoIterator<Item = Node>) -> Self {
+    pub fn anonymous(&self, nodes: impl IntoIterator<Item = Node>) -> Self {
         Self(Arc::new(RwLock::new(OwnedLayout {
             node: None,
             inlines: nodes.into_iter().collect(),
@@ -94,6 +95,7 @@ impl Layout {
             margin: CssQuad::one(0.0),
             border: CssQuad::one(0.0),
             padding: CssQuad::one(0.0),
+            text_align: self.read().text_align,
         })))
     }
 
@@ -121,6 +123,7 @@ impl Layout {
             padding: style.padding().map_or(Style::initial().padding(), |x| {
                 Some(x.resolve(available, font_size))
             }),
+            text_align: style.text_align(),
         })))
     }
 
@@ -266,7 +269,7 @@ impl Layout {
         for child in candidates {
             if Self::is_block_level(&child) {
                 if !inlines.is_empty() {
-                    let layout = Self::anonymous(inlines.drain(..));
+                    let layout = self.anonymous(inlines.drain(..));
                     debug!(box_child = %*child.data(), before = ?layout);
                     boxes.push(layout);
                 } else {
@@ -285,7 +288,7 @@ impl Layout {
             // if there are other boxes inside this box, create an
             // anonymous box for them.
             if !boxes.is_empty() {
-                let layout = Self::anonymous(inlines.drain(..));
+                let layout = self.anonymous(inlines.drain(..));
                 boxes.push(layout);
             }
             // otherwise, there were only inlines, so make all of them
@@ -544,10 +547,7 @@ impl Layout {
             .iter()
             .map(|x| x.rect().right())
             .fold(0.0, f32::max);
-        let align = self
-            .node()
-            .map_or(CssTextAlign::Left, |x| x.data().style().text_align());
-        let offset = match align {
+        let offset = match self.read().text_align {
             CssTextAlign::Left => 0.0,
             CssTextAlign::Right => available - width,
             CssTextAlign::Center => (available - width) / 2.0,
