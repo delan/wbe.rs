@@ -20,6 +20,7 @@ pub type BrowserWrite<'n, T> = RwLockWriteGuardRefMut<'n, OwnedBrowser, T>;
 pub enum RenderStatus {
     Load,
     Parse,
+    Style,
     Layout,
     Done,
 }

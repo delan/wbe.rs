@@ -63,6 +63,11 @@ fn main() -> eyre::Result<()> {
                     result
                 }
                 result @ OwnedDocument::Parsed { .. } => {
+                    browser.set_status(RenderStatus::Style);
+                    request.egui_ctx.request_repaint();
+                    result
+                }
+                result @ OwnedDocument::Styled { .. } => {
                     browser.set_status(RenderStatus::Layout);
                     request.egui_ctx.request_repaint();
                     result
@@ -170,6 +175,7 @@ impl eframe::App for App {
                         ui.label(match status {
                             RenderStatus::Load => "load",
                             RenderStatus::Parse => "parse",
+                            RenderStatus::Style => "style",
                             RenderStatus::Layout => "layout",
                             RenderStatus::Done => unreachable!(),
                         });

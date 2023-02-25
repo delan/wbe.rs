@@ -57,6 +57,11 @@ pub enum OwnedDocument {
         response_body: String,
         dom: Node,
     },
+    Styled {
+        location: String,
+        response_body: String,
+        dom: Node,
+    },
     LaidOut {
         location: String,
         response_body: String,
@@ -81,7 +86,7 @@ impl OwnedDocument {
                 response_body,
                 dom,
                 ..
-            } => OwnedDocument::Parsed {
+            } => OwnedDocument::Styled {
                 location,
                 response_body,
                 dom,
@@ -96,6 +101,7 @@ impl OwnedDocument {
             OwnedDocument::Navigated { .. } => "Navigated",
             OwnedDocument::Loaded { .. } => "Loaded",
             OwnedDocument::Parsed { .. } => "Parsed",
+            OwnedDocument::Styled { .. } => "Styled",
             OwnedDocument::LaidOut { .. } => "LaidOut",
         }
     }
@@ -136,6 +142,15 @@ impl OwnedDocument {
         let dom = parse_html(&response_body)?;
         debug!(%dom);
 
+        Ok(OwnedDocument::Parsed {
+            location,
+            response_body,
+            dom,
+        })
+    }
+
+    #[instrument(skip(location, response_body, dom))]
+    fn style(location: String, response_body: String, dom: Node) -> eyre::Result<OwnedDocument> {
         // start with ua styles
         let mut css_rules = parse_css_file(include_str!("html.css"))?;
 
@@ -147,7 +162,7 @@ impl OwnedDocument {
         // now resolve in pre-order traversal
         resolve_styles(&dom, &css_rules)?;
 
-        Ok(OwnedDocument::Parsed {
+        Ok(OwnedDocument::Styled {
             location,
             response_body,
             dom,
@@ -203,6 +218,11 @@ impl OwnedDocument {
                 response_body,
             } => Self::parse(location, response_body)?,
             OwnedDocument::Parsed {
+                location,
+                response_body,
+                dom,
+            } => Self::style(location, response_body, dom)?,
+            OwnedDocument::Styled {
                 location,
                 response_body,
                 dom,
@@ -279,6 +299,11 @@ impl OwnedDocument {
                 size_of_val(&Self::None) + size_of_string(location) + size_of_string(response_body)
             }
             Self::Parsed {
+                location,
+                response_body,
+                dom,
+            }
+            | Self::Styled {
                 location,
                 response_body,
                 dom,
