@@ -113,6 +113,7 @@ fn apply(
             if !match_complex(node, complex) {
                 continue;
             }
+            debug!(node = %*node.data(), ?complex);
             apply_declarations(node, declarations, style, parent_style, property)?;
         }
     }
