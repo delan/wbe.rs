@@ -713,7 +713,7 @@ impl CssLineHeight {
         match value {
             "normal" => Some(Self::Normal),
             other => {
-                if let Ok(number) = f32::from_str(dbg!(other)) {
+                if let Ok(number) = f32::from_str(other) {
                     Some(Self::Number(number))
                 } else {
                     CssLength::parse(other).map(Self::Length)
