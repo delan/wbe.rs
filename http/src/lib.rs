@@ -11,10 +11,36 @@ use eyre::bail;
 use rustls_connector::RustlsConnector;
 use tracing::{debug, instrument, trace};
 
-use wbe_core::{dump, lparse_chomp, rparse_split, trim_ascii, ReadWriteStream};
+use wbe_core::{dump, lparse, lparse_chomp, rparse_split, trim_ascii, ReadWriteStream};
 
 #[instrument]
-pub fn request(url: &Url) -> eyre::Result<(usize, BTreeMap<String, String>, Vec<u8>)> {
+pub fn request(
+    url: &str,
+    base: Option<&str>,
+) -> eyre::Result<(usize, BTreeMap<String, String>, Vec<u8>)> {
+    let url = if let Some(data) = lparse(url, "data:([^;,]+)((?:;base64)?),(.*)") {
+        assert_eq!(data.get(2).unwrap().as_str(), "");
+        let mut result = vec![];
+        let mut input = data.get(3).unwrap().as_str();
+        while !input.is_empty() {
+            if let Some(percent) = lparse_chomp(&mut input, "%[0-9A-Fa-f]{2}") {
+                let percent = percent.get(0).unwrap().as_str();
+                result.push(u8::from_str_radix(&percent[1..], 16).unwrap());
+            } else {
+                let (index, _) = input.char_indices().nth(1).unwrap();
+                let (next, rest) = input.split_at(index);
+                for octet in next.bytes() {
+                    result.push(octet);
+                }
+                input = rest;
+            }
+        }
+        return Ok((200, Default::default(), result));
+    } else {
+        let base = base.map(|x| Url::new(x, None).unwrap());
+        Url::new(url, base.as_ref())?
+    };
+
     let mut stream: Box<dyn ReadWriteStream> = match url.scheme() {
         "http:" => Box::new(TcpStream::connect((url.hostname(), url.port()))?),
         "https:" => {

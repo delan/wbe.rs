@@ -52,7 +52,7 @@ this project loosely implements the [Web Browser Engineering](https://browser.en
 * [x] chapter 1, downloading web pages
     * [ ] exercise: http/1.1 and user-agent
     * [ ] exercise: file url scheme
-    * [ ] exercise: data url scheme
+    * [x] exercise: data url scheme
     * [ ] ~~exercise: body tag filter~~
     * [x] exercise: entities
     * [ ] exercise: view-source

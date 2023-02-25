@@ -12,7 +12,7 @@ use tracing::{debug, error, info, instrument, warn};
 use wbe_core::dump_backtrace;
 use wbe_dom::{Node, NodeData, OwnedNode};
 use wbe_html_parser::parse_html;
-use wbe_http::{request, Url};
+use wbe_http::request;
 use wbe_layout::Paint;
 use wbe_layout::{viewport::ViewportInfo, Layout, OwnedLayout};
 use wbe_style::{parse_css_file, resolve_styles};
@@ -130,8 +130,7 @@ impl OwnedDocument {
 
     #[instrument]
     fn load(location: String) -> eyre::Result<OwnedDocument> {
-        let url = Url::new(&location, None)?;
-        let body = match wbe_http::request(&url) {
+        let body = match wbe_http::request(&location, None) {
             Ok((200 | 204, _headers, body)) => body,
             Ok((status, _headers, _body)) => format!("<h1>[http {}]</h1>", status).into_bytes(),
             Err(error) => format!("<h1>[network error]</h1>{}", error).into_bytes(),
@@ -175,9 +174,7 @@ impl OwnedDocument {
         }) {
             if let Some(href) = node.attr("href") {
                 fn request_link(href: &str, base: &str) -> eyre::Result<String> {
-                    let base = Url::new(base, None)?;
-                    let url = Url::new(&href, Some(&base))?;
-                    let body = match request(&url) {
+                    let body = match request(href, Some(base)) {
                         Ok((200, _headers, body)) => body,
                         Ok((status, _headers, _body)) => bail!("http {}: {}", status, href),
                         Err(error) => return Err(error),
