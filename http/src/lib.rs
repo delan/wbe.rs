@@ -13,7 +13,7 @@ use tracing::{debug, instrument, trace};
 use wbe_core::{dump, lparse_chomp, lparse_split, rparse_split, trim_ascii, ReadWriteStream};
 
 #[instrument]
-pub fn request(url: &str) -> eyre::Result<(BTreeMap<String, String>, Vec<u8>)> {
+pub fn request(url: &str) -> eyre::Result<(usize, BTreeMap<String, String>, Vec<u8>)> {
     let mut url = url;
     let scheme = lparse_chomp(&mut url, "https?:")
         .expect("failed to chomp url scheme")
@@ -58,16 +58,10 @@ pub fn request(url: &str) -> eyre::Result<(BTreeMap<String, String>, Vec<u8>)> {
     assert_ne!(stream.read_until(b'\n', &mut received)?, 0);
 
     let line = received.strip_suffix(b"\r\n").unwrap();
-    let [version, status, explanation] = line.splitn(3, |x| *x == b' ').collect::<Vec<_>>()[..]
+    let [_version, status, _explanation] = line.splitn(3, |x| *x == b' ').collect::<Vec<_>>()[..]
         else { panic!("failed to parse response status line") };
-    assert_eq!(
-        status,
-        b"200",
-        "unexpected {:?} {:?} {:?}",
-        dump(version),
-        dump(status),
-        dump(explanation)
-    );
+    let Ok(Ok(status)) = str::from_utf8(status).map(usize::from_str)
+        else { panic!("failed to parse response status code") };
     received.clear();
 
     let mut headers = BTreeMap::default();
@@ -96,5 +90,5 @@ pub fn request(url: &str) -> eyre::Result<(BTreeMap<String, String>, Vec<u8>)> {
     stream.read_to_end(&mut body)?;
     debug!(body = dump(&body));
 
-    Ok((headers, body))
+    Ok((status, headers, body))
 }

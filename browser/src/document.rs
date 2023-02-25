@@ -128,7 +128,11 @@ impl OwnedDocument {
 
     #[instrument]
     fn load(location: String) -> eyre::Result<OwnedDocument> {
-        let (_headers, body) = wbe_http::request(&location)?;
+        let body = match wbe_http::request(&location) {
+            Ok((200 | 204, _headers, body)) => body,
+            Ok((status, _headers, _body)) => format!("<h1>[http {}]</h1>", status).into_bytes(),
+            Err(error) => format!("<h1>[network error]</h1>{}", error).into_bytes(),
+        };
 
         Ok(OwnedDocument::Loaded {
             location,
