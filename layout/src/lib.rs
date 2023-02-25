@@ -54,6 +54,7 @@ struct DocumentContext<'v, 'p> {
 
 #[derive(Debug)]
 struct InlineContext {
+    content_rect: Rect,
     cursor: Pos2,
     max_ascent: f32,
     max_height: f32,
@@ -347,6 +348,7 @@ impl Layout {
             }
         } else if !self.inlines().is_empty() {
             let mut ic = InlineContext {
+                content_rect,
                 cursor: content_rect.min,
                 max_ascent: 0.0,
                 max_height: 0.0,
@@ -565,7 +567,7 @@ impl Layout {
             dc.display_list.push(text);
         }
 
-        ic.cursor.x = self.read().rect.min.x;
+        ic.cursor.x = ic.content_rect.min.x;
         ic.cursor.y += ic.max_height;
         ic.max_ascent = 0.0;
         ic.max_height = 0.0;
