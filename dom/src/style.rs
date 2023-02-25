@@ -12,6 +12,7 @@ lazy_static::lazy_static! {
         margin: CssQuad::one(CssLength::Zero),
         padding: CssQuad::one(CssLength::Zero),
         border: CssQuad::one(CssBorder::none()),
+        text_align: Some(CssTextAlign::Left),
         font: Some(CssFont::initial()),
         width: Some(CssWidth::Auto),
         height: Some(CssHeight::Auto),
@@ -26,6 +27,7 @@ pub struct Style {
     pub margin: CssQuad<CssLength>,
     pub padding: CssQuad<CssLength>,
     pub border: CssQuad<CssBorder>,
+    pub text_align: Option<CssTextAlign>,
     pub font: Option<CssFont>,
     pub width: Option<CssWidth>,
     pub height: Option<CssHeight>,
@@ -54,6 +56,13 @@ pub enum CssDisplay {
     Block,
     InlineBlock,
     ListItem,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CssTextAlign {
+    Left,
+    Right,
+    Center,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -102,6 +111,7 @@ impl Style {
             margin: CssQuad::default(),
             padding: CssQuad::default(),
             border: CssQuad::default(),
+            text_align: None,
             font: None,
             width: None,
             height: None,
@@ -116,6 +126,7 @@ impl Style {
 
     pub fn new_inherited(&self) -> Self {
         Self {
+            text_align: self.text_align,
             font: self.font.clone(),
             color: self.color.clone(),
             ..Self::initial().clone()
@@ -240,6 +251,10 @@ impl Style {
     pub fn border_left_color(&self) -> CssColor {
         self.border
             .left_map_or(&Self::initial().border, |b| b.color)
+    }
+
+    pub fn text_align(&self) -> CssTextAlign {
+        self.get(|s| s.text_align)
     }
 
     pub fn font_size(&self) -> f32 {

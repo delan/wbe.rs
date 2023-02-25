@@ -23,7 +23,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use wbe_core::{dump_backtrace, FONTS};
 use wbe_dom::{
-    style::{CssDisplay, CssFontStyle, CssFontWeight, CssQuad},
+    style::{CssDisplay, CssFontStyle, CssFontWeight, CssQuad, CssTextAlign},
     Node, NodeType, Style,
 };
 use wbe_html_lexer::{html_word, HtmlWord};
@@ -521,8 +521,9 @@ impl Layout {
     }
 
     fn flush(&self, dc: &mut DocumentContext, ic: &mut InlineContext) -> eyre::Result<()> {
-        for mut text in ic.line_display_list.drain(..) {
-            match &mut text {
+        // move text paints for ‘vertical-align’
+        for text in &mut ic.line_display_list[..] {
+            match text {
                 Paint::Text(rect, _, font, _) => {
                     *rect = rect.translate(vec2(
                         0.0,
@@ -531,7 +532,33 @@ impl Layout {
                 }
                 _ => unreachable!(),
             }
+        }
 
+        // move text paints for ‘text-align’
+        let available = self.read().rect.width();
+        let width = ic
+            .line_display_list
+            .iter()
+            .map(|x| x.rect().right())
+            .fold(0.0, f32::max);
+        let align = self
+            .node()
+            .map_or(CssTextAlign::Left, |x| x.data().style().text_align());
+        let offset = match align {
+            CssTextAlign::Left => 0.0,
+            CssTextAlign::Right => available - width,
+            CssTextAlign::Center => (available - width) / 2.0,
+        };
+        for text in &mut ic.line_display_list[..] {
+            match text {
+                Paint::Text(rect, _, _, _) => {
+                    *rect = rect.translate(vec2(offset, 0.0));
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        for text in ic.line_display_list.drain(..) {
             dc.display_list.push(text);
         }
 

@@ -10,8 +10,8 @@ use wbe_css_parser::{
 };
 use wbe_dom::{
     style::{
-        CssBorder, CssColor, CssFont, CssFontStyle, CssFontWeight, CssHeight, CssQuad, CssWidth,
-        INITIAL_STYLE,
+        CssBorder, CssColor, CssFont, CssFontStyle, CssFontWeight, CssHeight, CssQuad,
+        CssTextAlign, CssWidth, INITIAL_STYLE,
     },
     Node, NodeType, Style,
 };
@@ -227,6 +227,21 @@ fn apply_declarations(
             "border-left" => {
                 #[rustfmt::skip]
                 trbl!(style, node, name, value, border, left, CssBorder::parse_shorthand(value));
+            }
+            "text-align" => {
+                if let Some(result) = if value.eq_ignore_ascii_case("left") {
+                    Some(CssTextAlign::Left)
+                } else if value.eq_ignore_ascii_case("right") {
+                    Some(CssTextAlign::Right)
+                } else if value.eq_ignore_ascii_case("center") {
+                    Some(CssTextAlign::Center)
+                } else {
+                    None
+                } {
+                    style.text_align = Some(result);
+                    debug!(node = %*node.data(), name, value);
+                    continue;
+                }
             }
             "font" => {
                 if value == "inherit" {
