@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, iter::once};
 
 use egui::Color32;
 use nom::{
@@ -97,10 +97,10 @@ pub enum Combinator {
 #[rustfmt::skip]
 pub fn css_selector_combinator(input: &str) -> IResult<&str, Combinator> {
     alt((
+        map(stag(">"), |_| Combinator::Child),
+        map(stag("+"), |_| Combinator::NextSibling),
+        map(stag("~"), |_| Combinator::SubsequentSibling),
         map(css_space, |_| Combinator::Descendant),
-        map(tag(">"), |_| Combinator::Child),
-        map(tag("+"), |_| Combinator::NextSibling),
-        map(tag("~"), |_| Combinator::SubsequentSibling),
     ))(input)
 }
 
@@ -108,11 +108,18 @@ pub type ComplexSelector<'s> = (
     Vec<(CompoundSelector<'s>, Combinator)>,
     CompoundSelector<'s>,
 );
+#[rustfmt::skip]
 pub fn css_selector_complex(input: &str) -> IResult<&str, ComplexSelector> {
-    many_till(
-        tuple((css_selector_compound, css_selector_combinator)),
+    let (rest, (first, right)) = tuple((
         css_selector_compound,
-    )(input)
+        many0(tuple((css_selector_combinator, css_selector_compound))),
+    ))(input)?;
+
+    let (combinators, mut right_compounds): (Vec<_>, Vec<_>) = right.into_iter().unzip();
+    let Some(last) = right_compounds.pop() else { return Ok((rest, (vec![], first))) };
+    let left = once(first).chain(right_compounds).zip(combinators);
+
+    Ok((rest, (left.collect(), last)))
 }
 
 pub type SelectorList<'s> = Vec<ComplexSelector<'s>>;
@@ -309,6 +316,10 @@ fn test_css_file() {
     assert_eq!(css_selector_compound("x{}"), Ok(("{}", vec!["x".to_owned()])));
     assert_eq!(css_selector_compound("x.y#z{}"), Ok(("{}", vec!["x".to_owned(), ".y".to_owned(), "#z".to_owned()])));
     assert_eq!(css_selector_complex("x{}"), Ok(("{}", (vec![], vec!["x".to_owned()]))));
+    assert_eq!(css_selector_combinator(" a{}"), Ok(("a{}", Combinator::Descendant)));
+    assert_eq!(css_selector_combinator(" > a{}"), Ok(("a{}", Combinator::Child)));
+    assert_eq!(css_selector_combinator(" + a{}"), Ok(("a{}", Combinator::NextSibling)));
+    assert_eq!(css_selector_combinator(" ~ a{}"), Ok(("a{}", Combinator::SubsequentSibling)));
     assert_eq!(css_selector_complex("x.y#z a>b+c~d{}"), Ok(("{}", (
         vec![
             (vec!["x".to_owned(), ".y".to_owned(), "#z".to_owned()], Combinator::Descendant),
@@ -321,6 +332,6 @@ fn test_css_file() {
     assert_eq!(css_selector_list("x{}"), Ok(("{}", vec![(vec![], vec!["x".to_owned()])])));
     assert_eq!(css_rule("x{}"), Ok(("", (vec![(vec![], vec!["x".to_owned()])], vec![]))));
     assert_eq!(css_file("x{}"), Ok(("", vec![(vec![(vec![], vec!["x".to_owned()])], vec![])])));
-    assert_eq!(css_file("*{}x{}"), Ok(("", vec![(vec![(vec![], vec!["x".to_owned()])], vec![])])));
+    assert_eq!(css_file("*{}x{}"), Ok(("", vec![(vec![(vec![], vec!["*".to_owned()])], vec![]), (vec![(vec![], vec!["x".to_owned()])], vec![])])));
     assert_eq!(css_file(include_str!("../../browser/src/html.css")), Ok(("", vec![])));
 }
