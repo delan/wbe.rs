@@ -233,7 +233,10 @@ impl OwnedDocument {
             if rect.intersects(viewport.rect) {
                 match paint {
                     Paint::Text(_, color, font, text) => {
-                        // painter.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::from_rgb(255, 0, 255)));
+                        // painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, Color32::from_rgb(255, 0, 255)));
+                        if font.egui.size <= 0.0 {
+                            continue;
+                        }
                         painter.text(rect.min, Align2::LEFT_TOP, text, font.egui.clone(), *color);
                     }
                     Paint::Fill(_, color) => {
