@@ -445,6 +445,9 @@ impl Layout {
         match node.r#type() {
             NodeType::Document => unreachable!(),
             NodeType::Element => {
+                if &*node.name() == "br" {
+                    self.flush(dc, ic)?;
+                }
                 for child in &*node.children() {
                     self.recurse(child.clone(), dc, ic)?;
                 }
