@@ -27,7 +27,7 @@ pub fn request(
                 let percent = percent.get(0).unwrap().as_str();
                 result.push(u8::from_str_radix(&percent[1..], 16).unwrap());
             } else {
-                let (index, _) = input.char_indices().nth(1).unwrap();
+                let index = input.char_indices().nth(1).map_or(input.len(), |(i, _)| i);
                 let (next, rest) = input.split_at(index);
                 for octet in next.bytes() {
                     result.push(octet);
